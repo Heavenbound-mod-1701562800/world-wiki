@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Generator, Optional
 
 from libs.llm import LLM
 from libs.store import Chunk, Store
@@ -35,8 +35,9 @@ class QA:
         if self.llm is None:
             self.llm = self.store.llm
 
-    def ask(self, question: str, *, top_k: int | None = None) -> Answer:
-        """检索相关总结后生成回答。"""
+    def _prepare(
+        self, question: str, *, top_k: int | None = None
+    ) -> tuple[str, list[Chunk], list[dict[str, str]]]:
         q = question.strip()
         if not q:
             raise ValueError("问题不能为空")
@@ -45,18 +46,40 @@ class QA:
 
         sources = self.store.query(q, top_k=top_k or self.top_k)
         context = self._format_context(sources)
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": f"问题：{q}\n\n资料：\n{context}\n\n请依据资料回答。",
+            },
+        ]
+        return q, sources, messages
+
+    def ask(self, question: str, *, top_k: int | None = None) -> Answer:
+        """检索相关总结后生成回答（非流式）。"""
+        q, sources, messages = self._prepare(question, top_k=top_k)
         assert self.llm is not None
-        answer = self.llm.chat(
-            [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": f"问题：{q}\n\n资料：\n{context}\n\n请依据资料回答。",
-                },
-            ],
-            temperature=0.2,
-        ).strip()
+        answer = self.llm.chat(messages, temperature=0.2).strip()
         return Answer(question=q, answer=answer, sources=sources)
+
+    def ask_stream(
+        self, question: str, *, top_k: int | None = None
+    ) -> Generator[str, None, Answer]:
+        """
+        流式作答：yield 文本 delta；生成器 return 值为完整 Answer。
+
+        用法：
+          gen = qa.ask_stream(q)
+          for delta in gen: ...
+          answer = gen 的 StopIteration.value，或用以下包装收集。
+        """
+        q, sources, messages = self._prepare(question, top_k=top_k)
+        assert self.llm is not None
+        parts: list[str] = []
+        for delta in self.llm.chat_stream(messages, temperature=0.2):
+            parts.append(delta)
+            yield delta
+        return Answer(question=q, answer="".join(parts).strip(), sources=sources)
 
     @staticmethod
     def _format_context(chunks: list[Chunk]) -> str:

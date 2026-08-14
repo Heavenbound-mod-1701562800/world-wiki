@@ -52,6 +52,7 @@ LLM_MAX_WORKERS = int(os.getenv("LLM_MAX_WORKERS", "10"))
 WIKI_HEADING = os.getenv("WIKI_HEADING", "h2")
 ASK_TOP_K = int(os.getenv("ASK_TOP_K", "5"))
 ASK_SHOW_SOURCES = False
+ASK_STREAM = True
 INGEST_RESET = False
 
 # Flask API

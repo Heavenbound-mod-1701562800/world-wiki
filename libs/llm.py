@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Iterable, Optional, Sequence
+from typing import Any, Generator, Iterable, Optional, Sequence
 
 import httpx
 from openai import OpenAI
@@ -48,7 +48,7 @@ class LLM:
         self,
         messages: list[dict[str, str]],
         model: Optional[str] = None,
-        temperature: float = 0.3,
+        temperature: float = 0.1,
         max_tokens: Optional[int] = None,
         **kwargs: Any,
     ) -> str:
@@ -66,6 +66,35 @@ class LLM:
         completion = self.client.chat.completions.create(**params)
         content = completion.choices[0].message.content
         return content or ""
+
+    def chat_stream(
+        self,
+        messages: list[dict[str, str]],
+        model: Optional[str] = None,
+        temperature: float = 0.1,
+        max_tokens: Optional[int] = None,
+        **kwargs: Any,
+    ) -> Generator[str, None, None]:
+        """流式对话，逐段 yield 文本 delta。"""
+        model_name = model or self.chat_model
+        logger.info("LLM chat_stream model=%s messages=%d", model_name, len(messages))
+        params: dict[str, Any] = {
+            "model": model_name,
+            "messages": messages,
+            "temperature": temperature,
+            "stream": True,
+        }
+        if max_tokens is not None:
+            params["max_tokens"] = max_tokens
+        params.update(kwargs)
+
+        stream = self.client.chat.completions.create(**params)
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
 
     def embed(
         self,

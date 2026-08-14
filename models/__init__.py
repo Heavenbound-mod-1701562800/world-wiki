@@ -23,6 +23,7 @@ __all__ = [
     "Result",
     "Wiki",
     "ask",
+    "ask_stream",
     "ingest",
     "summarize",
 ]
@@ -104,7 +105,7 @@ def ask(
     top_k: int | None = None,
     show_sources: bool | None = None,
 ) -> Answer:
-    """基于向量库回答问题。"""
+    """基于向量库回答问题（非流式）。"""
     q = (question or "").strip()
     if not q:
         raise ValueError('请提供问题，例如：python scripts/main.py --ask "风神是谁？"')
@@ -120,15 +121,73 @@ def ask(
 
     result = qa.ask(q, top_k=top_k)
     logger.info("%s", result.answer)
-
-    if show_sources and result.sources:
-        logger.info("来源：")
-        for i, chunk in enumerate(result.sources, 1):
-            label = (
-                chunk.metadata.get("label")
-                or chunk.metadata.get("title")
-                or chunk.metadata.get("filename")
-            )
-            dist = f"{chunk.distance:.4f}" if chunk.distance is not None else "?"
-            logger.info("  [%d] %s (distance=%s)", i, label, dist)
+    _log_sources(result, show_sources=show_sources)
     return result
+
+
+def ask_stream(
+    question: str,
+    *,
+    top_k: int | None = None,
+    show_sources: bool | None = None,
+):
+    """
+    流式回答：yield SSE 友好事件 dict。
+
+      {"type": "delta", "text": "..."}
+      {"type": "done", "question": "...", "answer": "...", "sources": [...]?}
+    """
+    q = (question or "").strip()
+    if not q:
+        raise ValueError('请提供问题，例如：python scripts/main.py --ask "风神是谁？"')
+
+    if top_k is None:
+        top_k = config.ASK_TOP_K
+    if show_sources is None:
+        show_sources = config.ASK_SHOW_SOURCES
+
+    qa = QA(top_k=top_k)
+    if qa.store.count() == 0:
+        raise RuntimeError("记忆里啥也没有")
+
+    gen = qa.ask_stream(q, top_k=top_k)
+    try:
+        while True:
+            delta = next(gen)
+            yield {"type": "delta", "text": delta}
+    except StopIteration as stop:
+        result = stop.value
+        if not isinstance(result, Answer):
+            raise RuntimeError("流式回答未返回完整结果") from stop
+        logger.info("%s", result.answer)
+        _log_sources(result, show_sources=show_sources)
+        done: dict = {
+            "type": "done",
+            "question": result.question,
+            "answer": result.answer,
+        }
+        if show_sources:
+            done["sources"] = [
+                {
+                    "id": chunk.id,
+                    "document": chunk.document,
+                    "metadata": chunk.metadata,
+                    "distance": chunk.distance,
+                }
+                for chunk in result.sources
+            ]
+        yield done
+
+
+def _log_sources(result: Answer, *, show_sources: bool) -> None:
+    if not (show_sources and result.sources):
+        return
+    logger.info("来源：")
+    for i, chunk in enumerate(result.sources, 1):
+        label = (
+            chunk.metadata.get("label")
+            or chunk.metadata.get("title")
+            or chunk.metadata.get("filename")
+        )
+        dist = f"{chunk.distance:.4f}" if chunk.distance is not None else "?"
+        logger.info("  [%d] %s (distance=%s)", i, label, dist)

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request, stream_with_context
 from flask_cors import CORS
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,6 +16,7 @@ if str(ROOT) not in sys.path:
 
 import config
 from models import ask as do_ask
+from models import ask_stream as do_ask_stream
 from models import ingest as do_ingest
 from models import summarize as do_summarize
 
@@ -30,6 +32,10 @@ def _json_body() -> dict[str, Any]:
 
 def _error(exc: Exception, status: int = 400):
     return jsonify({"error": str(exc)}), status
+
+
+def _sse(payload: dict[str, Any]) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 @app.get("/health")
@@ -55,7 +61,9 @@ def summarize():
 
     return jsonify(
         {
-            "count": len(results),
+            "page_count": len({item.chapter.source_url for item in results}),
+            "document_count": len(results),
+            "pages": sorted({item.chapter.source_url for item in results}),
             "results": [
                 {
                     "entry": item.chapter.entry,
@@ -94,9 +102,20 @@ def ingest():
 
 @app.post("/ask")
 def ask():
-    """对应 CLI --ask。"""
+    """对应 CLI --ask。body.stream 缺省用 config.ASK_STREAM。"""
     body = _json_body()
     show_sources = body.get("show_sources")
+    stream = body.get("stream")
+    if stream is None:
+        stream = config.ASK_STREAM
+
+    if stream:
+        return _ask_stream_response(
+            body.get("question") or "",
+            top_k=body.get("top_k"),
+            show_sources=show_sources,
+        )
+
     try:
         result = do_ask(
             body.get("question") or "",
@@ -124,6 +143,36 @@ def ask():
             for chunk in result.sources
         ]
     return jsonify(payload)
+
+
+def _ask_stream_response(
+    question: str,
+    *,
+    top_k: Any,
+    show_sources: Any,
+) -> Response:
+    @stream_with_context
+    def generate():
+        try:
+            for event in do_ask_stream(
+                question,
+                top_k=top_k,
+                show_sources=show_sources,
+            ):
+                yield _sse(event)
+        except (ValueError, FileNotFoundError, RuntimeError) as exc:
+            yield _sse({"type": "error", "error": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            yield _sse({"type": "error", "error": str(exc)})
+
+    return Response(
+        generate(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 def main() -> None:
