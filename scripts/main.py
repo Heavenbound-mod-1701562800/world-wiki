@@ -66,7 +66,7 @@ def parse_args() -> argparse.Namespace:
         const="auto",
         default=None,
         metavar="PATH",
-        help="保存下载的 HTML（默认 data/raw/...；多 URL 时忽略自定义 PATH）",
+        help="兼容旧参数；下载的页面总会写入 data/raw",
     )
     parser.add_argument(
         "-o",
