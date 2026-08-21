@@ -13,6 +13,8 @@ ROOT_DIR = Path(__file__).resolve().parent
 DATA_DIR = ROOT_DIR / "data"
 SUMMARIES_DIR = DATA_DIR / "summaries"
 VECTOR_STORE_DIR = DATA_DIR / "chroma"
+RAW_DIR = DATA_DIR / "raw"
+PAGES_DB = DATA_DIR / "pages.sqlite"
 
 # .env.local 覆盖 .env，便于本地密钥不进仓库
 load_dotenv(ROOT_DIR / ".env")
@@ -47,6 +49,7 @@ CRAWLER_REQUEST_INTERVAL = float(os.getenv("CRAWLER_REQUEST_INTERVAL", "0.5"))
 CRAWLER_MAX_WORKERS = int(os.getenv("CRAWLER_MAX_WORKERS", "20"))
 LLM_REQUEST_INTERVAL = float(os.getenv("LLM_REQUEST_INTERVAL", "0.2"))
 LLM_MAX_WORKERS = int(os.getenv("LLM_MAX_WORKERS", "10"))
+LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "300"))
 
 # 业务默认值（CLI / Flask 共用）
 WIKI_HEADING = os.getenv("WIKI_HEADING", "h2")

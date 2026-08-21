@@ -8,15 +8,18 @@ from typing import Iterable
 from urllib.parse import urlparse
 
 import config
+from models.dictionary import Dictionary
 from models.ingest import Ingest, IngestReport
 from models.qa import Answer, QA
-from models.wiki import Chapter, Result, Wiki
+from models.wiki import Chapter, Citation, Result, Wiki
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "Answer",
     "Chapter",
+    "Citation",
+    "Dictionary",
     "Ingest",
     "IngestReport",
     "QA",
@@ -34,10 +37,11 @@ def summarize(
     *,
     output_dir: str | Path | None = None,
     max_chapters: int | None = None,
-    save_html: str | Path | None = None,
+    save_html: str | Path | None = None,  # 兼容旧调用；下载页总会写入 data/raw
     heading: str | None = None,
 ) -> list[Result]:
     """爬取/读取页面并总结为 Markdown。"""
+    _ = save_html
     if isinstance(sources, (str, Path)):
         source_list = [sources]
     else:
@@ -61,7 +65,6 @@ def summarize(
         source_list,
         output_dir=Path(output_dir) if output_dir else None,
         max_chapters=max_chapters,
-        save_html=save_html,
     )
     if not results:
         raise RuntimeError("未拆出有效章节，请检查页面结构或调整 heading。")
