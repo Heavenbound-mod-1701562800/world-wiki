@@ -3,22 +3,30 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import sys
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, Response, jsonify, request, stream_with_context
+# Windows 注册表常把 .js 标成 text/plain，Chrome 会拒绝执行 type=module
+mimetypes.add_type("text/javascript", ".js")
+mimetypes.add_type("text/javascript", ".mjs")
+
+from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
 from flask_cors import CORS
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+FRONTEND_DIST = ROOT / "frontend" / "dist"
+
 import config
 from models import ask as do_ask
 from models import ask_stream as do_ask_stream
 from models import ingest as do_ingest
 from models import summarize as do_summarize
+from libs.page_store import Page
 
 config.setup_logging()
 
@@ -43,6 +51,12 @@ def health():
     return jsonify({"status": "ok"})
 
 
+@app.get("/pages")
+def pages():
+    """已抓取/总结过的 URL 目录。"""
+    return jsonify({"pages": Page.list_pages()})
+
+
 @app.post("/summarize")
 def summarize():
     """对应 CLI --summarize。"""
@@ -58,6 +72,8 @@ def summarize():
         )
     except (ValueError, FileNotFoundError, RuntimeError) as exc:
         return _error(exc)
+    except Exception as exc:  # noqa: BLE001 — 超时等不要把 Flask debug traceback 甩给前端
+        return _error(exc, status=500)
 
     return jsonify(
         {
@@ -173,6 +189,55 @@ def _ask_stream_response(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+_STATIC_SUFFIXES = {
+    ".js",
+    ".mjs",
+    ".css",
+    ".map",
+    ".svg",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".ico",
+    ".woff",
+    ".woff2",
+    ".json",
+    ".txt",
+    ".webp",
+}
+
+
+def _spa_file(rel_path: str):
+    """托管 vite build 产物；无扩展名的未知路径回退 index.html，给 React Router 用。"""
+    if not FRONTEND_DIST.is_dir():
+        return jsonify({"error": "前端未构建，请先运行 npm run build"}), 404
+
+    dist = FRONTEND_DIST.resolve()
+    target = (dist / rel_path).resolve() if rel_path else dist / "index.html"
+    try:
+        target.relative_to(dist)
+    except ValueError:
+        return jsonify({"error": "not found"}), 404
+
+    if rel_path and target.is_file():
+        return send_from_directory(dist, rel_path)
+
+    # 静态资源缺失时不要回退 HTML，否则 Chrome 会当成脚本加载并白屏
+    if rel_path and Path(rel_path).suffix.lower() in _STATIC_SUFFIXES:
+        return jsonify({"error": "not found"}), 404
+    return send_from_directory(dist, "index.html")
+
+
+@app.get("/")
+def spa_root():
+    return _spa_file("")
+
+
+@app.get("/<path:path>")
+def spa(path: str):
+    return _spa_file(path)
 
 
 def main() -> None:
