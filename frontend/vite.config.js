@@ -8,14 +8,17 @@ const backend = {
   proxyTimeout: 0,
 }
 
+const proxy = {
+  '/ask': backend,
+  '/summarize': backend,
+  '/ingest': backend,
+  '/pages': backend,
+  '/health': backend,
+}
+
 export default defineConfig({
   plugins: [react()],
-  server: {
-    proxy: {
-      '/ask': backend,
-      '/summarize': backend,
-      '/ingest': backend,
-      '/health': backend,
-    },
-  },
+  server: { proxy },
+  // vite preview 也走同一套代理，否则生产构建页请求不到 Flask
+  preview: { proxy },
 })
