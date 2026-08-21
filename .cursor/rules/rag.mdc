@@ -1,0 +1,13 @@
+---
+description: Chroma 入库与 RAG 问答
+globs: models/ingest.py,models/qa.py,libs/store.py
+alwaysApply: false
+---
+
+# 向量库与问答
+
+`Store` 直连 `chromadb.PersistentClient`，cosine HNSW。Embedding 走火山方舟（`doubao-embedding-vision-*` 用 multimodal 接口）。Chroma 不是 LangChain，不要为换包而包一层。
+
+`Ingest` 扫描 `data/summaries/*.md`，整篇 embedding；`content_hash` 未变则跳过。`--ingest --reset` 才清空重建。
+
+QA 只把 `chunk.document` 塞进 prompt。带〔出处〕或 NPC 对话的内容必须限定语气，不得说成确定设定。不要在回答里写「根据某某文档」。

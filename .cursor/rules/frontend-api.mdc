@@ -1,0 +1,15 @@
+---
+description: Flask API、前端代理与管理页
+globs: api/**/*.py,frontend/**/*.{js,jsx,css}
+alwaysApply: false
+---
+
+# API 与前端
+
+Flask 路由必须写在 SPA catch-all `GET /<path:path>` **之前**。新 API 同时加到 `frontend/vite.config.js` 的 `server.proxy` 和 `preview.proxy`。
+
+Windows 下 `.js` 必须 `mimetypes.add_type("text/javascript", ".js")`，否则生产白屏（模块脚本被标成 text/plain）。
+
+前端 `fetch` 用相对路径（`/ask` `/summarize` `/pages`）。Admin 两个 tab：抓取、页面库。不要轮询 `/pages`，不要在点抓取时自动切 tab；列表靠打开 tab 拉一次或用户刷新。
+
+`LLM_MAX_WORKERS` 默认 10：章节总结会并行，方舟易超时。限流调 `.env.local`，不要把队列改成「看起来串行、实际仍 10 路」。

@@ -1,0 +1,21 @@
+---
+description: Wiki 抓取、引用绑定、按页总结
+globs: models/wiki.py,models/dictionary.py,libs/crawler.py,libs/page_store.py,libs/db.py
+alwaysApply: false
+---
+
+# 总结流水线
+
+`Wiki.run` **按 URL 串行处理**（下载 → 拆章 → 该页章节可走 `llm_queue` 并行）。每页更新 peewee `Page`：`pending → fetching → summarizing → done|partial|failed`。
+
+下载只走 MediaWiki `api.php?action=parse`，HTML 写入 `data/raw/`。本地 `.json` 取 `parse.text` 再包一层文章 HTML。
+
+## Citation（与 Chapter 同级，在 wiki.py）
+
+拆章前 `Citation.bind`：把 `sup.reference` 换成 `〔出处：脚注原文 | 绝对URL〕`，再删 References。不要推断 kind，只用 label。`Chapter.citations` 只挂本章出现过的引用。md 文末 `## 出处` 来自该列表（英文脚注原文 + 链接，不经 LLM）。
+
+## 精简 prompt
+
+入模前 `Dictionary.matches_in` 对本章做大小写不敏感检索（只收已有中文的词），命中作为「专名对照」。原文不替换。模型只输出 JSON：`summary`（精简 markdown）和 `untranslated`（对照表未覆盖、须保持英文的专名）；调用带 `response_format={"type": "json_object"}`。解析失败则该章跳过。`summary` 写入 md；`untranslated` 经 `_text` 清洗后 `Dictionary.add_local`（`source=2`，`zh` 空）。禁止自行音译。NPC 对话必须写成「据某某所述」。超时见 `LLM_TIMEOUT` 和 `chat()` 重试。
+
+词表：`source=1` 为 Genshin Dictionary（https://dataset.genshin-dictionary.com/words.json ），`source=2` 为本地补录。`sync()` 不覆盖 source=2。已有 md 需重新 summarize 才会更新。

@@ -1,0 +1,31 @@
+---
+description: world-wiki 项目地图与不可破的约定
+alwaysApply: true
+---
+
+# world-wiki
+
+原神世界观 RAG：Fandom Wiki → 章节精简 md → Chroma 检索 → 问答。不要引入 LangChain。
+
+## 分层
+
+- `libs/`：LLM、爬虫、Chroma、peewee（`libs/db.py`）、页面目录、任务队列
+- `models/`：Wiki 总结、Dictionary 中英词表、Ingest、QA；对外入口 `models/__init__.py`
+- `api/app.py`：Flask（`/summarize` `/ingest` `/ask` `/pages` `/health`）并托管 `frontend/dist`
+- `frontend/`：Vite + React；开发走代理，生产 `npm run build` 后由 Flask 提供
+- `schema/schemas.sql`：SQLite 表现状（库文件仍在 `data/pages.sqlite`）
+- `scripts/main.py`：CLI（`--summarize` / `--ingest` / `--ask`）
+
+## 数据（均在 gitignore 的 `data/`）
+
+- `raw/`：下载的 Wiki HTML
+- `summaries/`：总结 md（入库文本）
+- `chroma/`：向量库
+- `pages.sqlite`：peewee 模型 `Page` / `Dictionary`；表结构见 [`schema/schemas.sql`](schema/schemas.sql)。`source=1` 来自 [Genshin Dictionary](https://genshin-dictionary.com) 的 https://dataset.genshin-dictionary.com/words.json （只保留 `en` / `zhCN`）；`source=2` 是总结时本地补录的未译专名（`zh` 可空）。`Dictionary.sync()` 只替换 source=1，不删 source=2；genshin 命中的本地行升级为 source=1。
+
+密钥只在 `.env` / `.env.local`。未要求不要 commit、不要改 git config。
+
+## 两条硬约定
+
+- 出处必须写进即将 embedding 的 **document 正文**，不要只放 Chroma metadata（QA 只看 document）
+- 不抓引用目标页；脚注原文默认可信。不把每条引用拆成独立向量
