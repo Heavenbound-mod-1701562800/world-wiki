@@ -6,7 +6,13 @@ import logging
 from typing import Any, Generator, Iterable, Optional, Sequence
 
 import httpx
-from openai import OpenAI
+from openai import APIConnectionError, APITimeoutError, OpenAI
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 import config
 from libs.task_queue import llm_queue
@@ -25,16 +31,16 @@ class LLM:
         base_url: Optional[str] = None,
         chat_model: Optional[str] = None,
         embedding_model: Optional[str] = None,
-        timeout: float = 120.0,
+        timeout: float | None = None,
     ) -> None:
         self.api_key = api_key or config.require_ark_api_key()
         self.base_url = (base_url or config.ARK_BASE_URL).rstrip("/")
         self.chat_model = chat_model or config.ARK_CHAT_MODEL
         self.embedding_model = embedding_model or config.ARK_EMBEDDING_MODEL
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None else config.LLM_TIMEOUT
         # 火山 API 走直连；不要跟着 Windows/v2ray 系统代理（否则会卡在代理上）
         self._http_client = httpx.Client(
-            timeout=timeout,
+            timeout=httpx.Timeout(self.timeout, connect=20.0),
             proxy=None,
             trust_env=False,
         )
@@ -42,8 +48,18 @@ class LLM:
             api_key=self.api_key,
             base_url=self.base_url,
             http_client=self._http_client,
+            timeout=self.timeout,
+            max_retries=2,
         )
 
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=8),
+        retry=retry_if_exception_type(
+            (APITimeoutError, APIConnectionError, httpx.TimeoutException)
+        ),
+    )
     def chat(
         self,
         messages: list[dict[str, str]],
