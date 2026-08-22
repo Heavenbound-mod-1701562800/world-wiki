@@ -110,16 +110,20 @@ class Crawler:
         return self.fetch_text(url, **kwargs)
 
     def fetch_bytes(self, url: str, **kwargs: Any) -> bytes:
+        """抓取原始字节。"""
         response = self.get(url, **kwargs)
         return response.content
 
     def resolve_url(self, base: str, href: str) -> str:
+        """相对链接转绝对 URL。"""
         return urljoin(base, href)
 
     def same_host(self, url_a: str, url_b: str) -> bool:
+        """两个 URL 是否同 host。"""
         return urlparse(url_a).netloc == urlparse(url_b).netloc
 
     def close(self) -> None:
+        """关闭底层 Session。"""
         self.session.close()
 
     def __enter__(self) -> "Crawler":
@@ -194,7 +198,7 @@ class FandomWikiCrawler:
         """把 wiki 页面 URL 转成 MediaWiki API 请求并返回正文 HTML。"""
         try:
             return self.fetch_via_mediawiki_api(url)
-        except Exception as exc:  # noqa: BLE001 — 单条失败不拖死整批
+        except CrawlerError as exc:
             logger.error("抓取失败：%s (%s)", url, exc)
             return ""
 
@@ -214,15 +218,7 @@ class FandomWikiCrawler:
 
     def fetch_via_mediawiki_api(self, url: str) -> str:
         """URL 形如 .../wiki/Page_Title → api.php?action=parse。"""
-        parsed = urlparse(url)
-        match = _WIKI_PATH_RE.match(parsed.path or "")
-        if not match or parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise CrawlerError(f"不是有效的 MediaWiki 词条 URL: {url}")
-
-        page = unquote(match.group(1))
-        if not page or page.endswith(".php"):
-            raise CrawlerError(f"无法从 URL 解析词条名: {url}")
-
+        parsed, page = self._wiki_page_from_url(url)
         api_url = f"{parsed.scheme}://{parsed.netloc}/api.php"
         response = self.crawler.get(
             api_url,
@@ -239,7 +235,27 @@ class FandomWikiCrawler:
                 "Referer": f"{parsed.scheme}://{parsed.netloc}/",
             },
         )
+        title, body = self._parse_mediawiki_json(response, api_url, url, page)
+        return self.wrap_article_html(title, body)
 
+    @staticmethod
+    def _wiki_page_from_url(url: str) -> tuple[Any, str]:
+        parsed = urlparse(url)
+        match = _WIKI_PATH_RE.match(parsed.path or "")
+        if not match or parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise CrawlerError(f"不是有效的 MediaWiki 词条 URL: {url}")
+        page = unquote(match.group(1))
+        if not page or page.endswith(".php"):
+            raise CrawlerError(f"无法从 URL 解析词条名: {url}")
+        return parsed, page
+
+    @staticmethod
+    def _parse_mediawiki_json(
+        response: Response,
+        api_url: str,
+        url: str,
+        page: str,
+    ) -> tuple[str, str]:
         try:
             payload = response.json()
         except ValueError as exc:
@@ -261,10 +277,10 @@ class FandomWikiCrawler:
 
         raw_title = parse.get("displaytitle") or parse.get("title") or page
         title = re.sub(r"<[^>]+>", "", str(raw_title)).strip() or page
-        return self._wrap_article_html(title, body)
+        return title, body
 
     @staticmethod
-    def _wrap_article_html(title: str, body: str) -> str:
+    def wrap_article_html(title: str, body: str) -> str:
         """包一层标准结构，便于后续按 #mw-content-text / h2 拆章。"""
         return (
             "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
@@ -275,6 +291,7 @@ class FandomWikiCrawler:
         )
 
     def close(self) -> None:
+        """关闭底层 HTTP 客户端。"""
         self.crawler.close()
 
     def __enter__(self) -> "FandomWikiCrawler":

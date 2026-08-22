@@ -11,7 +11,7 @@ const STATUS_LABEL = {
 }
 
 /** 按行解析网址；空行忽略。也兼容「空行分段」。 */
-export function parseUrlBlocks(text) {
+function parseUrlBlocks(text) {
   const urls = []
   const seen = new Set()
   for (const line of text.split(/\r?\n/)) {

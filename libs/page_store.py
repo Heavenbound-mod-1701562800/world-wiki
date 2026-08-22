@@ -15,6 +15,8 @@ def _now() -> str:
 
 
 class Page(BaseModel):
+    """一条已提交抓取的 Wiki 页面及其总结状态。"""
+
     url = TextField(primary_key=True)
     title = TextField(default="")
     status = TextField()
@@ -25,12 +27,15 @@ class Page(BaseModel):
     updated_at = TextField()
 
     class Meta:
+        """pages 表。"""
+
         table_name = "pages"
 
     def __repr__(self) -> str:
         return f"<Page url='{self.url}', status='{self.status}'>"
 
     def to_dict(self) -> dict[str, Any]:
+        """给 /pages API 用的字典。"""
         return {
             "url": self.url,
             "title": self.title,
@@ -54,6 +59,7 @@ class Page(BaseModel):
         chapter_ok: Optional[int] = None,
         raw_path: Optional[str] = None,
     ) -> Page:
+        """按 url 插入或更新状态字段。"""
         url = url.strip()
         if not url:
             raise ValueError("url 不能为空")
@@ -89,8 +95,9 @@ class Page(BaseModel):
 
     @classmethod
     def list_pages(cls) -> list[dict[str, Any]]:
+        """全部页面，新更新的在前。"""
         query = cls.select().order_by(cls.updated_at.desc(), cls.url.asc())
-        return [row.to_dict() for row in query]
+        return [row.to_dict() for row in query]  # pylint: disable=not-an-iterable
 
 
 def _ensure_table() -> None:

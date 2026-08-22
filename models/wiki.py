@@ -75,6 +75,7 @@ class Citation:
     ref_id: str = ""
 
     def marker(self) -> str:
+        """内联〔出处〕文本。"""
         if self.url:
             return f"〔出处：{self.label} | {self.url}〕"
         return f"〔出处：{self.label}〕"
@@ -171,6 +172,7 @@ class Chapter:
 
     @property
     def slug(self) -> str:
+        """用作 md 文件名的条目__标题。"""
         entry = self._safe_name(self.entry or "未命名条目")
         title = self._safe_name(self.title or "未命名标题")
         if entry == title:
@@ -180,6 +182,8 @@ class Chapter:
 
 @dataclass
 class Result:
+    """一章总结的落盘结果。"""
+
     chapter: Chapter
     summary: str
     output_path: Path
@@ -364,7 +368,7 @@ class Wiki:
         title = parse.get("title") or path.stem
         title = re.sub(r"<[^>]+>", "", str(title)).strip() or path.stem
         page_url = f"{DEFAULT_WIKI_ORIGIN}/wiki/{title.replace(' ', '_')}"
-        return FandomWikiCrawler._wrap_article_html(title, body), page_url
+        return FandomWikiCrawler.wrap_article_html(title, body), page_url
 
     def _get_llm(self) -> LLM:
         if self.llm is None:
@@ -416,7 +420,7 @@ class Wiki:
         for chapter, future in zip(chapters, futures):
             try:
                 summary, untranslated = future.result()
-            except Exception as exc:  # noqa: BLE001 — 单章失败不拖死整页
+            except Exception as exc:  # pylint: disable=broad-exception-caught
                 failed += 1
                 logger.error(
                     "总结失败，已跳过：%s / %s (%s)",
@@ -470,12 +474,12 @@ class Wiki:
 
     def _split_chapters(
         self,
-        html: str,
+        page_html: str,
         *,
         source_url: str = "",
         page_title: Optional[str] = None,
     ) -> list[Chapter]:
-        soup = BeautifulSoup(html, "lxml")
+        soup = BeautifulSoup(page_html, "lxml")
         root = self._pick_content_root(soup)
         catalog = Citation.bind(root, source_url)
 
@@ -537,19 +541,7 @@ class Wiki:
         chapters: list[Chapter] = []
         order = 0
         heading_set = set(headings)
-
-        first = headings[0]
-        preface_parts: list[str] = []
-        for sib in first.previous_siblings:
-            if isinstance(sib, NavigableString):
-                text = str(sib).strip()
-                if text:
-                    preface_parts.append(text)
-            elif isinstance(sib, Tag):
-                text = sib.get_text("\n", strip=True)
-                if text:
-                    preface_parts.append(text)
-        preface = self._normalize_text("\n".join(reversed(preface_parts)))
+        preface = self._collect_preface(headings[0])
         if len(preface) >= self.min_chapter_chars:
             chapters.append(
                 Chapter(
@@ -571,25 +563,7 @@ class Wiki:
                 if heading.name and heading.name.startswith("h")
                 else 2
             )
-            parts: list[str] = []
-            for sib in heading.next_siblings:
-                if isinstance(sib, Tag) and sib in heading_set:
-                    break
-                if isinstance(sib, Tag) and sib.name in self.heading_tags:
-                    break
-                if isinstance(sib, NavigableString):
-                    text = str(sib).strip()
-                    if text:
-                        parts.append(text)
-                elif isinstance(sib, Tag):
-                    nested = sib.find(self.heading_tags)
-                    if nested and nested in heading_set:
-                        break
-                    text = sib.get_text("\n", strip=True)
-                    if text:
-                        parts.append(text)
-
-            content = self._normalize_text("\n".join(parts))
+            content = self._collect_heading_content(heading, heading_set)
             if len(content) < self.min_chapter_chars:
                 continue
             chapters.append(
@@ -606,6 +580,38 @@ class Wiki:
             order += 1
 
         return chapters
+
+    def _collect_preface(self, first: Tag) -> str:
+        parts: list[str] = []
+        for sib in first.previous_siblings:
+            text = self._sibling_plain_text(sib)
+            if text:
+                parts.append(text)
+        return self._normalize_text("\n".join(reversed(parts)))
+
+    def _collect_heading_content(self, heading: Tag, heading_set: set) -> str:
+        parts: list[str] = []
+        for sib in heading.next_siblings:
+            if isinstance(sib, Tag) and (
+                sib in heading_set or sib.name in self.heading_tags
+            ):
+                break
+            if isinstance(sib, Tag):
+                nested = sib.find(self.heading_tags)
+                if nested and nested in heading_set:
+                    break
+            text = self._sibling_plain_text(sib)
+            if text:
+                parts.append(text)
+        return self._normalize_text("\n".join(parts))
+
+    @staticmethod
+    def _sibling_plain_text(sib: NavigableString | Tag) -> str:
+        if isinstance(sib, NavigableString):
+            return str(sib).strip()
+        if isinstance(sib, Tag):
+            return sib.get_text("\n", strip=True)
+        return ""
 
     @staticmethod
     def _citations_in_text(

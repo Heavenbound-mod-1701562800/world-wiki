@@ -100,6 +100,7 @@ def setup_logging(level: str | None = None) -> None:
 
 
 def require_ark_api_key() -> str:
+    """读取 ARK_API_KEY；未配置则抛错。"""
     if not ARK_API_KEY:
         raise RuntimeError(
             "未配置 ARK_API_KEY。请在 .env 或 .env.local 中填入密钥。"

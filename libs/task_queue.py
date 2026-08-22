@@ -11,10 +11,6 @@ import config
 
 R = TypeVar("R")
 
-_crawler_queue: Optional["TaskQueue"] = None
-_llm_queue: Optional["TaskQueue"] = None
-_lock = threading.Lock()
-
 
 class TaskQueue:
     """持久线程池：submit 投递任务，间隔在 worker 真正开跑前等待。"""
@@ -62,28 +58,47 @@ class TaskQueue:
         return [future.result() for future in futures]
 
     def shutdown(self, wait: bool = True) -> None:
+        """关闭线程池。"""
         self._pool.shutdown(wait=wait)
 
 
+class _LazyQueue:
+    """进程内单例 TaskQueue，第一次 get 时才创建。"""
+
+    def __init__(self, factory: Callable[[], TaskQueue]) -> None:
+        self._factory = factory
+        self._queue: Optional[TaskQueue] = None
+        self._lock = threading.Lock()
+
+    def get(self) -> TaskQueue:
+        """返回已创建的队列，必要时先 factory()。"""
+        with self._lock:
+            if self._queue is None:
+                self._queue = self._factory()
+            return self._queue
+
+
 def crawler_queue() -> TaskQueue:
-    global _crawler_queue
-    with _lock:
-        if _crawler_queue is None:
-            _crawler_queue = TaskQueue(
-                interval_sec=config.CRAWLER_REQUEST_INTERVAL,
-                max_workers=config.CRAWLER_MAX_WORKERS,
-                name="crawler",
-            )
-        return _crawler_queue
+    """下载任务队列。"""
+    return _CRAWLER.get()
 
 
 def llm_queue() -> TaskQueue:
-    global _llm_queue
-    with _lock:
-        if _llm_queue is None:
-            _llm_queue = TaskQueue(
-                interval_sec=config.LLM_REQUEST_INTERVAL,
-                max_workers=config.LLM_MAX_WORKERS,
-                name="llm",
-            )
-        return _llm_queue
+    """LLM 任务队列。"""
+    return _LLM.get()
+
+
+_CRAWLER = _LazyQueue(
+    lambda: TaskQueue(
+        interval_sec=config.CRAWLER_REQUEST_INTERVAL,
+        max_workers=config.CRAWLER_MAX_WORKERS,
+        name="crawler",
+    )
+)
+_LLM = _LazyQueue(
+    lambda: TaskQueue(
+        interval_sec=config.LLM_REQUEST_INTERVAL,
+        max_workers=config.LLM_MAX_WORKERS,
+        name="llm",
+    )
+)

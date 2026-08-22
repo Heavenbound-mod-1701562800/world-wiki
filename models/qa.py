@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Generator, Optional
+from typing import Iterable, Iterator, Optional
 
 from libs.llm import LLM
 from libs.store import Chunk, Store
@@ -20,9 +20,53 @@ SYSTEM_PROMPT = """你是原神世界观解释助手。
 
 @dataclass
 class Answer:
+    """一次问答：问题、回答、检索到的资料块。"""
+
     question: str
     answer: str
     sources: list[Chunk] = field(default_factory=list)
+
+    def source_dicts(self) -> list[dict]:
+        """把 sources 编成 API / SSE 用的字典列表。"""
+        return [
+            {
+                "id": chunk.id,
+                "document": chunk.document,
+                "metadata": chunk.metadata,
+                "distance": chunk.distance,
+            }
+            for chunk in self.sources
+        ]
+
+
+@dataclass
+class AnswerStream:
+    """流式作答：for 循环拿 token，结束后 .result 是 Answer。"""
+
+    question: str
+    sources: list[Chunk]
+    _tokens: Iterable[str] = field(repr=False)
+    _parts: list[str] = field(default_factory=list, init=False, repr=False)
+    _done: bool = field(default=False, init=False, repr=False)
+
+    def __iter__(self) -> Iterator[str]:
+        self._parts.clear()
+        self._done = False
+        for delta in self._tokens:
+            self._parts.append(delta)
+            yield delta
+        self._done = True
+
+    @property
+    def result(self) -> Answer:
+        """完整回答；须先把 token 迭代完。"""
+        if not self._done:
+            raise RuntimeError("流式回答尚未结束")
+        return Answer(
+            question=self.question,
+            answer="".join(self._parts).strip(),
+            sources=self.sources,
+        )
 
 
 @dataclass
@@ -66,22 +110,15 @@ class QA:
 
     def ask_stream(
         self, question: str, *, top_k: int | None = None
-    ) -> Generator[str, None, Answer]:
-        """
-        流式作答：yield 文本 delta；生成器 return 值为完整 Answer。
-
-        用法：
-          gen = qa.ask_stream(q)
-          for delta in gen: ...
-          answer = gen 的 StopIteration.value，或用以下包装收集。
-        """
+    ) -> AnswerStream:
+        """检索后流式生成；迭代 token，结束后读 stream.result。"""
         q, sources, messages = self._prepare(question, top_k=top_k)
         assert self.llm is not None
-        parts: list[str] = []
-        for delta in self.llm.chat_stream(messages, temperature=0.2):
-            parts.append(delta)
-            yield delta
-        return Answer(question=q, answer="".join(parts).strip(), sources=sources)
+        return AnswerStream(
+            question=q,
+            sources=sources,
+            _tokens=self.llm.chat_stream(messages, temperature=0.2),
+        )
 
     @staticmethod
     def _format_context(chunks: list[Chunk]) -> str:

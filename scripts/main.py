@@ -13,12 +13,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 import config
 from models import ask, ingest, summarize
@@ -27,6 +21,7 @@ logger = logging.getLogger("main")
 
 
 def parse_args() -> argparse.Namespace:
+    """解析 --summarize / --ingest / --ask 及附属参数。"""
     parser = argparse.ArgumentParser(
         description="原神世界观工具（--summarize / --ingest / --ask）",
     )
@@ -111,6 +106,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def run_summarize(args: argparse.Namespace) -> int:
+    """执行 --summarize。"""
     sources = list(args.texts or []) + list(args.url or [])
     try:
         summarize(
@@ -127,6 +123,7 @@ def run_summarize(args: argparse.Namespace) -> int:
 
 
 def run_ingest(args: argparse.Namespace) -> int:
+    """执行 --ingest。"""
     if args.texts:
         logger.error("--ingest 不接受问题文本；若要提问请用 --ask。")
         return 1
@@ -139,6 +136,7 @@ def run_ingest(args: argparse.Namespace) -> int:
 
 
 def run_ask(args: argparse.Namespace) -> int:
+    """执行 --ask。"""
     try:
         ask(
             " ".join(args.texts or []),
@@ -152,6 +150,7 @@ def run_ask(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
+    """按 flag 分发到 summarize / ingest / ask。"""
     config.setup_logging()
     args = parse_args()
     if args.summarize:

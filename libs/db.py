@@ -18,11 +18,16 @@ database = SqliteDatabase(
 
 
 class BaseModel(Model):
+    """本项目 peewee 模型的公共基类。"""
+
     class Meta:
+        """绑定共用 sqlite。"""
+
         database = database
 
 
 def connect(path: str | Path | None = None) -> SqliteDatabase:
+    """连接到 path（默认 config.PAGES_DB）；测试可切到临时库。"""
     target = Path(path or config.PAGES_DB)
     target.parent.mkdir(parents=True, exist_ok=True)
     resolved = str(target)
