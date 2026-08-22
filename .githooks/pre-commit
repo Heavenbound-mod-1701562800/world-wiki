@@ -1,0 +1,11 @@
+#!/bin/sh
+# 任意分支 git commit 前跑 pylint + 前端 eslint；失败则中止 commit。
+ROOT=$(git rev-parse --show-toplevel)
+if [ -x "$ROOT/.venv/Scripts/python.exe" ]; then
+  PY="$ROOT/.venv/Scripts/python.exe"
+elif [ -x "$ROOT/.venv/bin/python" ]; then
+  PY="$ROOT/.venv/bin/python"
+else
+  PY=python3
+fi
+exec "$PY" "$ROOT/scripts/pre_commit.py"
