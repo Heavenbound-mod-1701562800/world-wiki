@@ -39,7 +39,6 @@ pip install -r requirements.txt
 # 1) 总结页面 → data/summaries/*.md
 python scripts/main.py --summarize samples/mondstadt_demo.html
 python scripts/main.py --summarize --url "https://your-wiki-page-url"
-python scripts/main.py --summarize --url "https://your-wiki-page-url" --save-html
 
 # 2) 把 md 写入向量库（content_hash 未变则跳过，hash 存在 Chroma metadata）
 python scripts/main.py --ingest

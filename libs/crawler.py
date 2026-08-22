@@ -6,7 +6,7 @@ import logging
 import re
 import threading
 from typing import Any, Mapping, Optional
-from urllib.parse import unquote, urljoin, urlparse
+from urllib.parse import unquote, urlparse
 
 import requests
 from requests import Response
@@ -18,7 +18,6 @@ from tenacity import (
 )
 
 import config
-from libs.task_queue import crawler_queue
 
 logger = logging.getLogger(__name__)
 
@@ -90,48 +89,6 @@ class Crawler:
             expected_statuses=expected_statuses,
         )
 
-    def fetch_text(
-        self,
-        url: str,
-        *,
-        encoding: Optional[str] = None,
-        **kwargs: Any,
-    ) -> str:
-        """抓取页面并返回解码后的文本。"""
-        response = self.get(url, **kwargs)
-        if encoding:
-            response.encoding = encoding
-        elif not response.encoding or response.encoding.lower() == "iso-8859-1":
-            response.encoding = response.apparent_encoding or "utf-8"
-        return response.text
-
-    def fetch_html(self, url: str, **kwargs: Any) -> str:
-        """抓取 HTML 页面内容。"""
-        return self.fetch_text(url, **kwargs)
-
-    def fetch_bytes(self, url: str, **kwargs: Any) -> bytes:
-        """抓取原始字节。"""
-        response = self.get(url, **kwargs)
-        return response.content
-
-    def resolve_url(self, base: str, href: str) -> str:
-        """相对链接转绝对 URL。"""
-        return urljoin(base, href)
-
-    def same_host(self, url_a: str, url_b: str) -> bool:
-        """两个 URL 是否同 host。"""
-        return urlparse(url_a).netloc == urlparse(url_b).netloc
-
-    def close(self) -> None:
-        """关闭底层 Session。"""
-        self.session.close()
-
-    def __enter__(self) -> "Crawler":
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        self.close()
-
     def _request_with_retry(
         self,
         method: str,
@@ -197,26 +154,12 @@ class FandomWikiCrawler:
     def fetch_html(self, url: str) -> str:
         """把 wiki 页面 URL 转成 MediaWiki API 请求并返回正文 HTML。"""
         try:
-            return self.fetch_via_mediawiki_api(url)
+            return self._fetch_via_mediawiki_api(url)
         except CrawlerError as exc:
             logger.error("抓取失败：%s (%s)", url, exc)
             return ""
 
-    def fetch_html_many(self, urls: list[str]) -> dict[str, str]:
-        """把每个 URL 丢进 crawler TaskQueue，join 后汇总；失败的跳过。"""
-        if not urls:
-            return {}
-
-        queue = crawler_queue()
-        futures = [queue.submit(self.fetch_html, url) for url in urls]
-        results: dict[str, str] = {}
-        for url, html in zip(urls, queue.gather(futures)):
-            if not html:
-                continue
-            results[url] = html
-        return results
-
-    def fetch_via_mediawiki_api(self, url: str) -> str:
+    def _fetch_via_mediawiki_api(self, url: str) -> str:
         """URL 形如 .../wiki/Page_Title → api.php?action=parse。"""
         parsed, page = self._wiki_page_from_url(url)
         api_url = f"{parsed.scheme}://{parsed.netloc}/api.php"
@@ -289,13 +232,3 @@ class FandomWikiCrawler:
             f'<div id="mw-content-text" class="mw-parser-output">{body}</div>'
             "</body></html>"
         )
-
-    def close(self) -> None:
-        """关闭底层 HTTP 客户端。"""
-        self.crawler.close()
-
-    def __enter__(self) -> "FandomWikiCrawler":
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        self.close()

@@ -70,7 +70,6 @@ def summarize():
             sources,
             output_dir=body.get("output_dir"),
             max_chapters=body.get("max_chapters"),
-            save_html=body.get("save_html"),
             heading=body.get("heading"),
         )
     except (ValueError, FileNotFoundError, RuntimeError) as exc:

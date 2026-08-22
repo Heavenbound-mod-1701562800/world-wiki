@@ -370,24 +370,12 @@ class Wiki:
         page_url = f"{DEFAULT_WIKI_ORIGIN}/wiki/{title.replace(' ', '_')}"
         return FandomWikiCrawler.wrap_article_html(title, body), page_url
 
-    def _get_llm(self) -> LLM:
-        if self.llm is None:
-            self.llm = LLM()
-        return self.llm
-
     def _save_one_raw(self, url: str, page_html: str) -> Path:
         path = self._default_raw_path(url)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(page_html, encoding="utf-8")
         logger.info("已保存 HTML：%s", path)
         return path
-
-    def _save_raw_html(self, html_by_url: dict[str, str]) -> None:
-        """下载结果统一写入 data/raw。"""
-        for url, page_html in html_by_url.items():
-            if not page_html:
-                continue
-            self._save_one_raw(url, page_html)
 
     @staticmethod
     def _default_raw_path(url: str) -> Path:
@@ -462,7 +450,9 @@ class Wiki:
             f"专名对照：\n{glossary_block}\n\n"
             f"原文：\n{chapter.content}"
         )
-        raw = self._get_llm().chat(
+        if self.llm is None:
+            self.llm = LLM()
+        raw = self.llm.chat(
             [
                 {"role": "system", "content": self.system_prompt},
                 {"role": "user", "content": user_prompt},

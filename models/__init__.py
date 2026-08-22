@@ -38,11 +38,9 @@ def summarize(
     *,
     output_dir: str | Path | None = None,
     max_chapters: int | None = None,
-    save_html: str | Path | None = None,  # 兼容旧调用；下载页总会写入 data/raw
     heading: str | None = None,
 ) -> list[Result]:
     """爬取/读取页面并总结为 Markdown。"""
-    _ = save_html
     if isinstance(sources, (str, Path)):
         source_list = [sources]
     else:
@@ -120,9 +118,6 @@ def ask(
         show_sources = config.ASK_SHOW_SOURCES
 
     qa = QA(top_k=top_k)
-    if qa.store.count() == 0:
-        raise RuntimeError("记忆里啥也没有")
-
     result = qa.ask(q, top_k=top_k)
     logger.info("%s", result.answer)
     _log_sources(result, show_sources=show_sources)
@@ -151,9 +146,6 @@ def ask_stream(
         show_sources = config.ASK_SHOW_SOURCES
 
     qa = QA(top_k=top_k)
-    if qa.store.count() == 0:
-        raise RuntimeError("记忆里啥也没有")
-
     stream = qa.ask_stream(q, top_k=top_k)
     for delta in stream:
         yield {"type": "delta", "text": delta}

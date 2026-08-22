@@ -57,11 +57,6 @@ class Dictionary(BaseModel):
         return f"<Dictionary en='{self.en}', zh='{self.zh}', source={self.source}>"
 
     @classmethod
-    def count(cls) -> int:
-        """词条总数。"""
-        return cls.select().count()  # pylint: disable=no-value-for-parameter
-
-    @classmethod
     def sync(cls) -> int:
         """拉取 words.json，只替换 source=1；本地补录保留，命中官中则升级。"""
         rows = cls._fetch_rows()
@@ -118,14 +113,6 @@ class Dictionary(BaseModel):
         if row is None or not row.zh:
             return None
         return str(row.zh)
-
-    @classmethod
-    def to_en(cls, zh: str) -> Optional[str]:
-        key = _text(zh)
-        if not key:
-            return None
-        row = cls.get_or_none(cls.zh == key)
-        return str(row.en) if row else None
 
     @classmethod
     def matches_in(cls, text: str) -> list[tuple[str, str]]:

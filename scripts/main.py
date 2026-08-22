@@ -56,14 +56,6 @@ def parse_args() -> argparse.Namespace:
         help="从该 URL 下载页面后再总结（可重复）",
     )
     parser.add_argument(
-        "--save-html",
-        nargs="?",
-        const="auto",
-        default=None,
-        metavar="PATH",
-        help="兼容旧参数；下载的页面总会写入 data/raw",
-    )
-    parser.add_argument(
         "-o",
         "--output-dir",
         default=None,
@@ -113,7 +105,6 @@ def run_summarize(args: argparse.Namespace) -> int:
             sources,
             output_dir=args.output_dir,
             max_chapters=args.max_chapters,
-            save_html=args.save_html,
             heading=args.heading,
         )
     except (ValueError, FileNotFoundError, RuntimeError) as exc:

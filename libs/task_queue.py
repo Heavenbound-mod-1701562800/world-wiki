@@ -48,18 +48,10 @@ class TaskQueue:
 
         return self._pool.submit(_task)
 
-    def run(self, fn: Callable[..., R], /, *args, **kwargs) -> R:
-        """submit 一个任务并立刻 join。"""
-        return self.submit(fn, *args, **kwargs).result()
-
     @staticmethod
     def gather(futures: Iterable[Future[R]]) -> list[R]:
         """按给定顺序等待全部 Future 完成。"""
         return [future.result() for future in futures]
-
-    def shutdown(self, wait: bool = True) -> None:
-        """关闭线程池。"""
-        self._pool.shutdown(wait=wait)
 
 
 class _LazyQueue:
@@ -78,23 +70,11 @@ class _LazyQueue:
             return self._queue
 
 
-def crawler_queue() -> TaskQueue:
-    """下载任务队列。"""
-    return _CRAWLER.get()
-
-
 def llm_queue() -> TaskQueue:
     """LLM 任务队列。"""
     return _LLM.get()
 
 
-_CRAWLER = _LazyQueue(
-    lambda: TaskQueue(
-        interval_sec=config.CRAWLER_REQUEST_INTERVAL,
-        max_workers=config.CRAWLER_MAX_WORKERS,
-        name="crawler",
-    )
-)
 _LLM = _LazyQueue(
     lambda: TaskQueue(
         interval_sec=config.LLM_REQUEST_INTERVAL,

@@ -18,4 +18,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-test.txt
       - name: Run tests
-        run: pytest tests/ -q
+        run: >
+          pytest tests/ -q
+          --cov=api --cov=models --cov=libs
+          --cov-report=term-missing
+          --cov-fail-under=65
