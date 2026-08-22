@@ -12,17 +12,6 @@ on:
       - "requirements-test.txt"
       - ".pylintrc"
       - ".github/workflows/pylint.yml"
-  push:
-    paths:
-      - "api/**"
-      - "libs/**"
-      - "models/**"
-      - "scripts/**"
-      - "config.py"
-      - "requirements.txt"
-      - "requirements-test.txt"
-      - ".pylintrc"
-      - ".github/workflows/pylint.yml"
 
 jobs:
   pylint:

@@ -5,10 +5,6 @@ on:
     paths:
       - "frontend/**"
       - ".github/workflows/frontend-lint.yml"
-  push:
-    paths:
-      - "frontend/**"
-      - ".github/workflows/frontend-lint.yml"
 
 jobs:
   eslint:
