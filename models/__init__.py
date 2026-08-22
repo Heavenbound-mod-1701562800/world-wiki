@@ -10,13 +10,14 @@ from urllib.parse import urlparse
 import config
 from models.dictionary import Dictionary
 from models.ingest import Ingest, IngestReport
-from models.qa import Answer, QA
+from models.qa import Answer, AnswerStream, QA
 from models.wiki import Chapter, Citation, Result, Wiki
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "Answer",
+    "AnswerStream",
     "Chapter",
     "Citation",
     "Dictionary",
@@ -37,11 +38,9 @@ def summarize(
     *,
     output_dir: str | Path | None = None,
     max_chapters: int | None = None,
-    save_html: str | Path | None = None,  # 兼容旧调用；下载页总会写入 data/raw
     heading: str | None = None,
 ) -> list[Result]:
     """爬取/读取页面并总结为 Markdown。"""
-    _ = save_html
     if isinstance(sources, (str, Path)):
         source_list = [sources]
     else:
@@ -119,9 +118,6 @@ def ask(
         show_sources = config.ASK_SHOW_SOURCES
 
     qa = QA(top_k=top_k)
-    if qa.store.count() == 0:
-        raise RuntimeError("记忆里啥也没有")
-
     result = qa.ask(q, top_k=top_k)
     logger.info("%s", result.answer)
     _log_sources(result, show_sources=show_sources)
@@ -150,36 +146,20 @@ def ask_stream(
         show_sources = config.ASK_SHOW_SOURCES
 
     qa = QA(top_k=top_k)
-    if qa.store.count() == 0:
-        raise RuntimeError("记忆里啥也没有")
-
-    gen = qa.ask_stream(q, top_k=top_k)
-    try:
-        while True:
-            delta = next(gen)
-            yield {"type": "delta", "text": delta}
-    except StopIteration as stop:
-        result = stop.value
-        if not isinstance(result, Answer):
-            raise RuntimeError("流式回答未返回完整结果") from stop
-        logger.info("%s", result.answer)
-        _log_sources(result, show_sources=show_sources)
-        done: dict = {
-            "type": "done",
-            "question": result.question,
-            "answer": result.answer,
-        }
-        if show_sources:
-            done["sources"] = [
-                {
-                    "id": chunk.id,
-                    "document": chunk.document,
-                    "metadata": chunk.metadata,
-                    "distance": chunk.distance,
-                }
-                for chunk in result.sources
-            ]
-        yield done
+    stream = qa.ask_stream(q, top_k=top_k)
+    for delta in stream:
+        yield {"type": "delta", "text": delta}
+    result = stream.result
+    logger.info("%s", result.answer)
+    _log_sources(result, show_sources=show_sources)
+    done: dict = {
+        "type": "done",
+        "question": result.question,
+        "answer": result.answer,
+    }
+    if show_sources:
+        done["sources"] = result.source_dicts()
+    yield done
 
 
 def _log_sources(result: Answer, *, show_sources: bool) -> None:

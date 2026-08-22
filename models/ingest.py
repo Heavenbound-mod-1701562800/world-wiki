@@ -12,6 +12,8 @@ from libs.store import Store
 
 @dataclass
 class IngestReport:
+    """一次入库的计数。"""
+
     upserted: int = 0
     skipped: int = 0
     total_files: int = 0
@@ -48,34 +50,11 @@ class Ingest:
         if reset:
             self.store.reset()
 
-        candidates: list[tuple[str, str, dict]] = []
+        candidates = []
         for path in files:
-            text = path.read_text(encoding="utf-8").strip()
-            if not text:
-                continue
-            meta = self._meta_from_md(text)
-            title = meta.get("title") or self._title_from_md(text) or path.stem
-            entry = meta.get("entry") or ""
-            label = title if not entry or entry == title else f"{entry} / {title}"
-            digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-            doc_id = (
-                "md-"
-                + hashlib.sha1(str(path.resolve()).encode("utf-8")).hexdigest()[:24]
-            )
-            candidates.append(
-                (
-                    doc_id,
-                    text,
-                    {
-                        "title": title,
-                        "entry": entry,
-                        "label": label,
-                        "path": str(path.resolve()),
-                        "filename": path.name,
-                        "content_hash": digest,
-                    },
-                )
-            )
+            item = self._candidate_from_md(path)
+            if item is not None:
+                candidates.append(item)
 
         if not candidates:
             report.store_count = self.store.count()
@@ -86,7 +65,16 @@ class Ingest:
             if reset
             else self.store.get_metadatas([doc_id for doc_id, _, _ in candidates])
         )
+        self._upsert_changed(candidates, existing, report)
+        report.store_count = self.store.count()
+        return report
 
+    def _upsert_changed(
+        self,
+        candidates: list[tuple[str, str, dict]],
+        existing: dict,
+        report: IngestReport,
+    ) -> None:
         documents: list[str] = []
         ids: list[str] = []
         metadatas: list[dict] = []
@@ -98,13 +86,36 @@ class Ingest:
             ids.append(doc_id)
             documents.append(text)
             metadatas.append(meta)
-
         if documents:
             self.store.upsert(documents, ids=ids, metadatas=metadatas)
             report.upserted = len(documents)
 
-        report.store_count = self.store.count()
-        return report
+    @staticmethod
+    def _candidate_from_md(path: Path) -> tuple[str, str, dict] | None:
+        text = path.read_text(encoding="utf-8").strip()
+        if not text:
+            return None
+        meta = Ingest._meta_from_md(text)
+        title = meta.get("title") or Ingest._title_from_md(text) or path.stem
+        entry = meta.get("entry") or ""
+        label = title if not entry or entry == title else f"{entry} / {title}"
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        doc_id = (
+            "md-"
+            + hashlib.sha1(str(path.resolve()).encode("utf-8")).hexdigest()[:24]
+        )
+        return (
+            doc_id,
+            text,
+            {
+                "title": title,
+                "entry": entry,
+                "label": label,
+                "path": str(path.resolve()),
+                "filename": path.name,
+                "content_hash": digest,
+            },
+        )
 
     @staticmethod
     def _title_from_md(text: str) -> str:

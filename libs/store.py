@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import chromadb
 import hashlib
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Sequence
+
+import chromadb
 
 import config
 from libs.llm import LLM
@@ -15,6 +16,8 @@ from libs.llm import LLM
 
 @dataclass
 class Chunk:
+    """一条检索命中：正文 + metadata + 距离。"""
+
     id: str
     document: str
     metadata: dict[str, Any]
@@ -42,11 +45,13 @@ class Store:
 
     @staticmethod
     def make_id(*parts: str) -> str:
+        """由内容片段生成短 id。"""
         raw = "||".join(parts)
         digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
         return f"{digest}-{uuid.uuid4().hex[:8]}"
 
     def count(self) -> int:
+        """集合内文档数。"""
         return self.collection.count()
 
     def get_metadatas(self, ids: Sequence[str]) -> dict[str, dict[str, Any]]:
@@ -145,6 +150,7 @@ class Store:
         ids: Optional[Sequence[str]] = None,
         where: Optional[dict[str, Any]] = None,
     ) -> None:
+        """按 id 或 where 删除。"""
         if ids is None and where is None:
             raise ValueError("删除时必须提供 ids 或 where")
         kwargs: dict[str, Any] = {}
@@ -155,6 +161,7 @@ class Store:
         self.collection.delete(**kwargs)
 
     def reset(self) -> None:
+        """清空并重建同名 collection。"""
         name = self.collection.name
         self._client.delete_collection(name)
         self.collection = self._client.get_or_create_collection(

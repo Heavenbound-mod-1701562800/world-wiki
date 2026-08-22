@@ -8,25 +8,27 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
+from flask_cors import CORS
+
 # Windows 注册表常把 .js 标成 text/plain，Chrome 会拒绝执行 type=module
 mimetypes.add_type("text/javascript", ".js")
 mimetypes.add_type("text/javascript", ".mjs")
-
-from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
-from flask_cors import CORS
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-FRONTEND_DIST = ROOT / "frontend" / "dist"
-
+# pylint: disable=wrong-import-position
 import config
 from models import ask as do_ask
 from models import ask_stream as do_ask_stream
 from models import ingest as do_ingest
 from models import summarize as do_summarize
 from libs.page_store import Page
+# pylint: enable=wrong-import-position
+
+FRONTEND_DIST = ROOT / "frontend" / "dist"
 
 config.setup_logging()
 
@@ -48,6 +50,7 @@ def _sse(payload: dict[str, Any]) -> str:
 
 @app.get("/health")
 def health():
+    """存活探测。"""
     return jsonify({"status": "ok"})
 
 
@@ -67,12 +70,11 @@ def summarize():
             sources,
             output_dir=body.get("output_dir"),
             max_chapters=body.get("max_chapters"),
-            save_html=body.get("save_html"),
             heading=body.get("heading"),
         )
     except (ValueError, FileNotFoundError, RuntimeError) as exc:
         return _error(exc)
-    except Exception as exc:  # noqa: BLE001 — 超时等不要把 Flask debug traceback 甩给前端
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         return _error(exc, status=500)
 
     return jsonify(
@@ -149,15 +151,7 @@ def ask():
         "answer": result.answer,
     }
     if resolved_show:
-        payload["sources"] = [
-            {
-                "id": chunk.id,
-                "document": chunk.document,
-                "metadata": chunk.metadata,
-                "distance": chunk.distance,
-            }
-            for chunk in result.sources
-        ]
+        payload["sources"] = result.source_dicts()
     return jsonify(payload)
 
 
@@ -169,6 +163,7 @@ def _ask_stream_response(
 ) -> Response:
     @stream_with_context
     def generate():
+        """把 ask_stream 事件写成 SSE data 行。"""
         try:
             for event in do_ask_stream(
                 question,
@@ -178,7 +173,7 @@ def _ask_stream_response(
                 yield _sse(event)
         except (ValueError, FileNotFoundError, RuntimeError) as exc:
             yield _sse({"type": "error", "error": str(exc)})
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             yield _sse({"type": "error", "error": str(exc)})
 
     return Response(
@@ -232,15 +227,18 @@ def _spa_file(rel_path: str):
 
 @app.get("/")
 def spa_root():
+    """站点根：前端 index.html。"""
     return _spa_file("")
 
 
 @app.get("/<path:path>")
 def spa(path: str):
+    """其余路径交给 React Router / 静态资源。"""
     return _spa_file(path)
 
 
 def main() -> None:
+    """开发用 Flask server。"""
     app.run(host=config.API_HOST, port=config.API_PORT, debug=config.API_DEBUG)
 
 

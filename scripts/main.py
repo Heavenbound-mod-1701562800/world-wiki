@@ -13,12 +13,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 import config
 from models import ask, ingest, summarize
@@ -27,6 +21,7 @@ logger = logging.getLogger("main")
 
 
 def parse_args() -> argparse.Namespace:
+    """解析 --summarize / --ingest / --ask 及附属参数。"""
     parser = argparse.ArgumentParser(
         description="原神世界观工具（--summarize / --ingest / --ask）",
     )
@@ -59,14 +54,6 @@ def parse_args() -> argparse.Namespace:
         action="append",
         default=[],
         help="从该 URL 下载页面后再总结（可重复）",
-    )
-    parser.add_argument(
-        "--save-html",
-        nargs="?",
-        const="auto",
-        default=None,
-        metavar="PATH",
-        help="兼容旧参数；下载的页面总会写入 data/raw",
     )
     parser.add_argument(
         "-o",
@@ -111,13 +98,13 @@ def parse_args() -> argparse.Namespace:
 
 
 def run_summarize(args: argparse.Namespace) -> int:
+    """执行 --summarize。"""
     sources = list(args.texts or []) + list(args.url or [])
     try:
         summarize(
             sources,
             output_dir=args.output_dir,
             max_chapters=args.max_chapters,
-            save_html=args.save_html,
             heading=args.heading,
         )
     except (ValueError, FileNotFoundError, RuntimeError) as exc:
@@ -127,6 +114,7 @@ def run_summarize(args: argparse.Namespace) -> int:
 
 
 def run_ingest(args: argparse.Namespace) -> int:
+    """执行 --ingest。"""
     if args.texts:
         logger.error("--ingest 不接受问题文本；若要提问请用 --ask。")
         return 1
@@ -139,6 +127,7 @@ def run_ingest(args: argparse.Namespace) -> int:
 
 
 def run_ask(args: argparse.Namespace) -> int:
+    """执行 --ask。"""
     try:
         ask(
             " ".join(args.texts or []),
@@ -152,6 +141,7 @@ def run_ask(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
+    """按 flag 分发到 summarize / ingest / ask。"""
     config.setup_logging()
     args = parse_args()
     if args.summarize:

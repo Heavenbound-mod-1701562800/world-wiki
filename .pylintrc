@@ -1,0 +1,22 @@
+[MAIN]
+source-roots=.
+ignore=.venv,data,frontend,tests
+jobs=0
+persistent=no
+fail-under=10
+
+[FORMAT]
+max-line-length=120
+
+[MESSAGES CONTROL]
+# peewee / dataclass 的 Meta 没有实例方法
+disable=
+    too-few-public-methods,
+    missing-class-docstring,
+    missing-function-docstring
+
+[DESIGN]
+max-args=7
+
+[TYPECHECK]
+ignored-classes=ModelSelect,Select,Query

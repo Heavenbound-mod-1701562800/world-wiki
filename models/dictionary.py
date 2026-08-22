@@ -11,12 +11,11 @@ import requests
 from peewee import SmallIntegerField, TextField
 
 import config
-from libs.db import BaseModel, connect, database
+from libs.db import BaseModel, database
 
 logger = logging.getLogger(__name__)
 
 WORDS_JSON_URL = "https://dataset.genshin-dictionary.com/words.json"
-_INSERT_BATCH = 500
 _MIN_EN_LEN = 3
 _MAX_EN_LEN = 64
 _URL_RE = re.compile(r"https?://[^\s\]）>\"']+", re.IGNORECASE)
@@ -41,6 +40,8 @@ class Dictionary(BaseModel):
     """data/pages.sqlite 上的中英专名。"""
 
     class Source(IntEnum):
+        """1=Genshin Dictionary，2=总结时本地补录。"""
+
         GENSHIN_DICTIONARY = 1
         LOCAL = 2
 
@@ -54,10 +55,6 @@ class Dictionary(BaseModel):
 
     def __repr__(self) -> str:
         return f"<Dictionary en='{self.en}', zh='{self.zh}', source={self.source}>"
-
-    @classmethod
-    def count(cls) -> int:
-        return cls.select().count()
 
     @classmethod
     def sync(cls) -> int:
@@ -97,7 +94,7 @@ class Dictionary(BaseModel):
     def add_local(cls, en: str) -> bool:
         """清洗后写入 source=2、zh 空；已有相同 en（大小写不敏感）则跳过。"""
         key = _text(en)
-        if not (_MIN_EN_LEN <= len(key) <= _MAX_EN_LEN):
+        if not _MIN_EN_LEN <= len(key) <= _MAX_EN_LEN:
             return False
         fold = key.casefold()
         for row in cls.select(cls.en):
@@ -108,6 +105,7 @@ class Dictionary(BaseModel):
 
     @classmethod
     def to_zh(cls, en: str) -> Optional[str]:
+        """英文专名 → 中文；没有或未译则 None。"""
         key = _text(en)
         if not key:
             return None
@@ -117,14 +115,6 @@ class Dictionary(BaseModel):
         return str(row.zh)
 
     @classmethod
-    def to_en(cls, zh: str) -> Optional[str]:
-        key = _text(zh)
-        if not key:
-            return None
-        row = cls.get_or_none(cls.zh == key)
-        return str(row.en) if row else None
-
-    @classmethod
     def matches_in(cls, text: str) -> list[tuple[str, str]]:
         """正文里出现过的专名（大小写不敏感）；不含 URL；跳过未译。"""
         haystack = _URL_RE.sub(" ", text or "").casefold()
@@ -132,7 +122,7 @@ class Dictionary(BaseModel):
         for row in cls.select(cls.en, cls.zh):
             en = _text(row.en)
             zh = _text(row.zh)
-            if not zh or not (_MIN_EN_LEN <= len(en) <= _MAX_EN_LEN):
+            if not zh or not _MIN_EN_LEN <= len(en) <= _MAX_EN_LEN:
                 continue
             folded = en.casefold()
             if folded not in by_fold:
