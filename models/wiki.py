@@ -18,6 +18,7 @@ from libs.crawler import FandomWikiCrawler
 from libs.llm import LLM
 from libs.page_store import Page
 from libs.task_queue import llm_queue
+from libs.utils import clean_text
 from models.dictionary import Dictionary
 
 logger = logging.getLogger(__name__)
@@ -187,6 +188,7 @@ class Result:
     chapter: Chapter
     summary: str
     output_path: Path
+    untranslated: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -417,13 +419,8 @@ class Wiki:
                     exc,
                 )
                 continue
-            for name in untranslated:
-                Dictionary.add_local(name)
-            path = out_dir / f"{chapter.slug}.md"
-            path.write_text(self._render_markdown(chapter, summary), encoding="utf-8")
-            results.append(
-                Result(chapter=chapter, summary=summary, output_path=path)
-            )
+            result = self._write_chapter(chapter, summary, untranslated, out_dir)
+            results.append(result)
             Page.upsert(
                 chapter.source_url,
                 status="summarizing",
@@ -433,6 +430,25 @@ class Wiki:
         if failed:
             logger.warning("本页总结：成功 %d 章，跳过 %d 章", len(results), failed)
         return results, failed
+
+    def _write_chapter(
+        self,
+        chapter: Chapter,
+        summary: str,
+        untranslated: list[str],
+        out_dir: Path,
+    ) -> Result:
+        names = [clean_text(name) for name in untranslated if clean_text(name)]
+        for name in names:
+            Dictionary.add_local(name)
+        path = out_dir / f"{chapter.slug}.md"
+        path.write_text(self._render_markdown(chapter, summary), encoding="utf-8")
+        return Result(
+            chapter=chapter,
+            summary=summary,
+            output_path=path,
+            untranslated=names,
+        )
 
     def _summarize_chapter(self, chapter: Chapter) -> tuple[str, list[str]]:
         blob = "\n".join(

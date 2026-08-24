@@ -22,6 +22,7 @@ import config
 logger = logging.getLogger(__name__)
 
 _WIKI_PATH_RE = re.compile(r"^(?:/[a-zA-Z0-9_-]+)?/wiki/(.+)$")
+DEFAULT_WIKI_ORIGIN = "https://genshin-impact.fandom.com"
 
 
 class CrawlerError(RuntimeError):
@@ -148,8 +149,83 @@ class FandomWikiCrawler:
     只走 api.php?action=parse，不请求原始 /wiki/ HTML。
     """
 
-    def __init__(self, crawler: Optional[Crawler] = None) -> None:
+    def __init__(
+        self,
+        crawler: Optional[Crawler] = None,
+        origin: str = DEFAULT_WIKI_ORIGIN,
+    ) -> None:
         self.crawler = crawler or Crawler()
+        self.origin = origin.rstrip("/")
+
+    def _api(self, **params: Any) -> dict[str, Any]:
+        """调用本站 api.php，返回 JSON。"""
+        params.setdefault("format", "json")
+        api_url = f"{self.origin}/api.php"
+        response = self.crawler.get(
+            api_url,
+            params=params,
+            headers={
+                "Accept": "application/json,text/javascript,*/*;q=0.1",
+                "Referer": f"{self.origin}/",
+            },
+        )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise CrawlerError(f"MediaWiki API 返回非 JSON: {api_url}") from exc
+        if "error" in payload:
+            err = payload["error"]
+            code = err.get("code", "unknown")
+            info = err.get("info", str(err))
+            raise CrawlerError(f"MediaWiki API 错误 ({code}): {info}")
+        return payload
+
+    @staticmethod
+    def _title_from_query(payload: Mapping[str, Any]) -> Optional[str]:
+        pages = (payload.get("query") or {}).get("pages") or {}
+        for page in pages.values():
+            if not isinstance(page, dict) or "missing" in page:
+                continue
+            title = page.get("title")
+            if title:
+                return str(title)
+        return None
+
+    def resolve_title(self, title: str) -> Optional[str]:
+        """精确标题（跟跳转）；缺页再 search 第一条。"""
+        payload = self._api(action="query", titles=title, redirects=1)
+        resolved = self._title_from_query(payload)
+        if resolved:
+            return resolved
+        payload = self._api(
+            action="query",
+            list="search",
+            srsearch=title,
+            srnamespace=0,
+            srlimit=1,
+        )
+        hits = (payload.get("query") or {}).get("search") or []
+        if not hits or not isinstance(hits[0], dict):
+            return None
+        found = hits[0].get("title")
+        if not found:
+            return None
+        payload = self._api(action="query", titles=found, redirects=1)
+        return self._title_from_query(payload)
+
+    def fetch_wikitext(self, title: str) -> str:
+        """action=parse&prop=wikitext。"""
+        payload = self._api(
+            action="parse",
+            page=title,
+            prop="wikitext",
+            redirects=1,
+        )
+        parse = payload.get("parse") or {}
+        text = parse.get("wikitext") or {}
+        if isinstance(text, dict):
+            return str(text.get("*") or "")
+        return str(text) if text else ""
 
     def fetch_html(self, url: str) -> str:
         """把 wiki 页面 URL 转成 MediaWiki API 请求并返回正文 HTML。"""

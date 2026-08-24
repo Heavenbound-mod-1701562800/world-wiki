@@ -21,11 +21,13 @@ if str(ROOT) not in sys.path:
 
 # pylint: disable=wrong-import-position
 import config
+from libs.page_store import Page
+from libs.utils import clean_text
 from models import ask as do_ask
 from models import ask_stream as do_ask_stream
 from models import ingest as do_ingest
 from models import summarize as do_summarize
-from libs.page_store import Page
+from models.dictionary import Dictionary
 # pylint: enable=wrong-import-position
 
 FRONTEND_DIST = ROOT / "frontend" / "dist"
@@ -60,6 +62,62 @@ def pages():
     return jsonify({"pages": Page.list_pages()})
 
 
+@app.get("/dictionary")
+def dictionary_search():
+    """按 en/zh 包含搜索，至少 2 字，默认每页 50。"""
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return _error(ValueError("搜索词至少 2 个字符"))
+    try:
+        offset = int(request.args.get("offset") or 0)
+        limit = int(request.args.get("limit") or 50)
+    except (TypeError, ValueError):
+        return _error(ValueError("offset/limit 无效"))
+    rows, total = Dictionary.search(q, offset=offset, limit=limit)
+    return jsonify(
+        {
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "items": [
+                {"en": row.en, "zh": row.zh, "source": int(row.source)}
+                for row in rows
+            ],
+        }
+    )
+
+
+@app.patch("/dictionary")
+def dictionary_update():
+    """按 en 改 zh / source。"""
+    body = _json_body()
+    en = body.get("en")
+    if not clean_text(en or ""):
+        return _error(ValueError("请提供 en"))
+    try:
+        ok = Dictionary.update_entry(
+            en,
+            zh=body["zh"] if "zh" in body else None,
+            source=body["source"] if "source" in body else None,
+        )
+    except ValueError as exc:
+        return _error(exc)
+    if not ok:
+        return jsonify({"error": "词条不存在"}), 404
+    return jsonify({"ok": True})
+
+
+@app.post("/dictionary/lookup")
+def dictionary_lookup():
+    """对 terms 逐条 fill_from_wiki。"""
+    body = _json_body()
+    terms = body.get("terms")
+    if not isinstance(terms, list):
+        return _error(ValueError("terms 须为数组"))
+    filled, missed = Dictionary.lookup_many(str(item) for item in terms)
+    return jsonify({"filled": filled, "missed": missed})
+
+
 @app.post("/summarize")
 def summarize():
     """对应 CLI --summarize。"""
@@ -77,11 +135,20 @@ def summarize():
     except Exception as exc:  # pylint: disable=broad-exception-caught
         return _error(exc, status=500)
 
+    untranslated = sorted(
+        {
+            name
+            for item in results
+            for name in (item.untranslated or [])
+            if name
+        }
+    )
     return jsonify(
         {
             "page_count": len({item.chapter.source_url for item in results}),
             "document_count": len(results),
             "pages": sorted({item.chapter.source_url for item in results}),
+            "untranslated": untranslated,
             "results": [
                 {
                     "entry": item.chapter.entry,

@@ -10,6 +10,15 @@ const STATUS_LABEL = {
   failed: '失败',
 }
 
+const SOURCE_LABEL = {
+  [-1]: '非专名',
+  1: '官中',
+  2: 'Wiki',
+  3: '手动',
+}
+
+const PAGE_SIZE = 50
+
 /** 按行解析网址；空行忽略。也兼容「空行分段」。 */
 function parseUrlBlocks(text) {
   const urls = []
@@ -32,16 +41,217 @@ function formatTime(stamp) {
   return d.toLocaleString()
 }
 
+function DictionaryPanel() {
+  const [q, setQ] = useState('')
+  const [offset, setOffset] = useState(0)
+  const [total, setTotal] = useState(0)
+  const [items, setItems] = useState([])
+  const [error, setError] = useState('')
+  const [editing, setEditing] = useState(null)
+  const [saving, setSaving] = useState(false)
+
+  const query = q.trim()
+
+  useEffect(() => {
+    if (query.length < 2) {
+      setItems([])
+      setTotal(0)
+      setError('')
+      return undefined
+    }
+    let cancelled = false
+    const params = new URLSearchParams({
+      q: query,
+      offset: String(offset),
+      limit: String(PAGE_SIZE),
+    })
+    fetch(`/dictionary?${params}`)
+      .then(async (res) => {
+        const data = await res.json()
+        if (!res.ok) {
+          throw new Error(data.error || `搜索失败 (${res.status})`)
+        }
+        if (!cancelled) {
+          setItems(data.items || [])
+          setTotal(Number(data.total) || 0)
+          setError('')
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err))
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [query, offset])
+
+  async function saveEdit(e) {
+    e.preventDefault()
+    if (!editing || saving) return
+    setSaving(true)
+    try {
+      const res = await fetch('/dictionary', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        body: JSON.stringify({
+          en: editing.en,
+          zh: editing.zh,
+          source: Number(editing.source),
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data.error || `保存失败 (${res.status})`)
+      }
+      setItems((prev) =>
+        prev.map((row) =>
+          row.en === editing.en
+            ? { ...row, zh: editing.zh, source: Number(editing.source) }
+            : row,
+        ),
+      )
+      setEditing(null)
+      setError('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const page = Math.floor(offset / PAGE_SIZE) + 1
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+
+  return (
+    <>
+      <h1>词典</h1>
+      <p className="admin-lead">
+        输入至少两个字符后搜索英文或中文。点一行可改中文和来源。
+      </p>
+      <input
+        className="admin-search"
+        value={q}
+        onChange={(e) => {
+          setQ(e.target.value)
+          setOffset(0)
+        }}
+        placeholder="搜索（至少 2 个字符）"
+      />
+      {error && <p className="admin-error">{error}</p>}
+      {query.length < 2 ? (
+        <p className="hint">再输入一些字才会搜索。</p>
+      ) : items.length === 0 ? (
+        <p className="hint">没有匹配的词。</p>
+      ) : (
+        <>
+          <div className="admin-table-wrap">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>英文</th>
+                  <th>中文</th>
+                  <th>来源</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((row) => (
+                  <tr
+                    key={`${row.en}:${row.source}`}
+                    className={
+                      editing?.en === row.en ? 'is-editing' : undefined
+                    }
+                    onClick={() =>
+                      setEditing({
+                        en: row.en,
+                        zh: row.zh || '',
+                        source: String(row.source),
+                      })
+                    }
+                  >
+                    <td>{row.en}</td>
+                    <td>{row.zh || '—'}</td>
+                    <td>{SOURCE_LABEL[row.source] || row.source}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="admin-pager">
+            <button
+              type="button"
+              disabled={offset <= 0}
+              onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+            >
+              上一页
+            </button>
+            <span className="hint">
+              {page} / {pages} · 共 {total}
+            </span>
+            <button
+              type="button"
+              disabled={offset + PAGE_SIZE >= total}
+              onClick={() => setOffset(offset + PAGE_SIZE)}
+            >
+              下一页
+            </button>
+          </div>
+        </>
+      )}
+      {editing && (
+        <form className="admin-edit" onSubmit={saveEdit}>
+          <div className="admin-page-title">{editing.en}</div>
+          <label>
+            中文
+            <input
+              value={editing.zh}
+              onChange={(e) =>
+                setEditing((cur) => ({ ...cur, zh: e.target.value }))
+              }
+            />
+          </label>
+          <label>
+            来源
+            <select
+              value={editing.source}
+              onChange={(e) =>
+                setEditing((cur) => ({ ...cur, source: e.target.value }))
+              }
+            >
+              <option value="1">官中</option>
+              <option value="2">Wiki</option>
+              <option value="3">手动</option>
+              <option value="-1">非专名</option>
+            </select>
+          </label>
+          <div className="composer-bar">
+            <button type="button" onClick={() => setEditing(null)}>
+              取消
+            </button>
+            <button type="submit" disabled={saving}>
+              {saving ? '保存中…' : '保存'}
+            </button>
+          </div>
+        </form>
+      )}
+    </>
+  )
+}
+
 export default function Admin() {
   const [tab, setTab] = useState('grab')
   const [raw, setRaw] = useState('')
   const [summarizing, setSummarizing] = useState(false)
   const [ingesting, setIngesting] = useState(false)
+  const [lookingUp, setLookingUp] = useState(false)
   const [error, setError] = useState('')
   const [summaryReport, setSummaryReport] = useState(null)
   const [ingestReport, setIngestReport] = useState(null)
   const [pages, setPages] = useState([])
   const [pagesError, setPagesError] = useState('')
+  const [untranslated, setUntranslated] = useState([])
+  const [filledTerms, setFilledTerms] = useState([])
 
   const previewUrls = useMemo(() => parseUrlBlocks(raw), [raw])
 
@@ -76,6 +286,8 @@ export default function Admin() {
     setError('')
     setIngestReport(null)
     setSummaryReport(null)
+    setUntranslated([])
+    setFilledTerms([])
     setSummarizing(true)
 
     try {
@@ -94,6 +306,7 @@ export default function Admin() {
         pages: data.pages || [],
         results: data.results || [],
       })
+      setUntranslated(data.untranslated || [])
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -126,6 +339,33 @@ export default function Admin() {
     }
   }
 
+  async function runWikiLookup() {
+    const pending = untranslated.filter((term) => !filledTerms.includes(term))
+    if (!pending.length || lookingUp) return
+    setLookingUp(true)
+    setError('')
+    try {
+      const res = await fetch('/dictionary/lookup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        body: JSON.stringify({ terms: pending }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data.error || `补译失败 (${res.status})`)
+      }
+      setFilledTerms((prev) => [...prev, ...(data.filled || [])])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLookingUp(false)
+    }
+  }
+
+  const pendingUntranslated = untranslated.filter(
+    (term) => !filledTerms.includes(term),
+  )
+
   return (
     <div className="app admin-app">
       <header className="topbar">
@@ -157,6 +397,15 @@ export default function Admin() {
               onClick={() => setTab('catalog')}
             >
               页面库
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'dict'}
+              className={`admin-tab${tab === 'dict' ? ' is-active' : ''}`}
+              onClick={() => setTab('dict')}
+            >
+              词典
             </button>
           </div>
 
@@ -225,6 +474,36 @@ export default function Admin() {
                       </ul>
                     </details>
                   )}
+                  {untranslated.length > 0 && (
+                    <details className="admin-details">
+                      <summary>
+                        未在词典中匹配到的词（{untranslated.length}）
+                      </summary>
+                      <ul className="admin-untranslated">
+                        {untranslated.map((term) => (
+                          <li
+                            key={term}
+                            className={
+                              filledTerms.includes(term) ? 'is-filled' : undefined
+                            }
+                          >
+                            {term}
+                            {filledTerms.includes(term) ? ' · 已补' : ''}
+                          </li>
+                        ))}
+                      </ul>
+                      <button
+                        type="button"
+                        className="admin-ingest"
+                        onClick={runWikiLookup}
+                        disabled={
+                          lookingUp || summarizing || pendingUntranslated.length === 0
+                        }
+                      >
+                        {lookingUp ? '补译中…' : '用 Wiki 补译'}
+                      </button>
+                    </details>
+                  )}
                   <button
                     type="button"
                     className="admin-ingest"
@@ -256,7 +535,7 @@ export default function Admin() {
                 </section>
               )}
             </>
-          ) : (
+          ) : tab === 'catalog' ? (
             <>
               <h1>页面库</h1>
               <p className="admin-lead">
@@ -316,6 +595,8 @@ export default function Admin() {
                 </div>
               )}
             </>
+          ) : (
+            <DictionaryPanel />
           )}
         </section>
       </main>

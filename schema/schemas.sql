@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS pages (
 );
 
 -- 中英专名。无主键。
--- source: 1 = Genshin Dictionary（官中），2 = 本地补录（zh 可空）
+-- source: 1 = Genshin Dictionary（官中），2 = Genshin Wiki Other Languages，
+--          3 = 手动/总结未译（zh 可空），-1 = 单独出现时不是专名
 CREATE TABLE IF NOT EXISTS dictionary (
     en TEXT NOT NULL,
     zh TEXT NOT NULL DEFAULT '',

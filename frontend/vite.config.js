@@ -13,6 +13,7 @@ const proxy = {
   '/summarize': backend,
   '/ingest': backend,
   '/pages': backend,
+  '/dictionary': backend,
   '/health': backend,
 }
 

@@ -2,30 +2,72 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from models.dictionary import Dictionary, _text
+from libs.crawler import CrawlerError, FandomWikiCrawler
+from libs.utils import clean_text
+from models.dictionary import Dictionary, _zh_from_other_languages
+
+_TRI_WT = """
+==Other Languages==
+{{Other Languages
+|en      = Tri-Commission
+|zhs     = 三奉行
+|zhs_rm  = Sān-fèngxíng
+|zht     = 三奉行
+|zh_tl   = Three Bugyou
+}}
+"""
+
+_XIAO_WT = """
+==Other Languages==
+{{Other Languages
+|default_hidden = 1
+|1_en     = Xiao
+|1_zhs    = 魈
+|1_zhs_rm = Xiāo
+|2_en     = Alatus
+|2_zhs    = 金鹏
+|2_zhs_rm = Jīnpéng
+}}
+"""
 
 
-def test_text_strips_quotes_and_space():
-    assert _text('  "Zhongli"  ') == "Zhongli"
-    assert _text("「钟离」") == "钟离"
-    assert _text(None) == ""
+def _json_response(payload: dict) -> MagicMock:
+    response = MagicMock()
+    response.json.return_value = payload
+    return response
+
+
+def test_clean_text_strips_quotes_punct_and_space():
+    assert clean_text('  "Zhongli"  ') == "Zhongli"
+    assert clean_text("「钟离」。") == "钟离"
+    assert clean_text('"Xiao!"') == "Xiao"
+    assert clean_text("Khaenri'ah") == "Khaenri'ah"
+    assert clean_text(None) == ""
 
 
 def test_add_local_cleans_and_skips_short():
     assert Dictionary.add_local('  "Raiden"  ') is True
     row = Dictionary.get(Dictionary.en == "Raiden")
     assert row.zh == ""
-    assert row.source == Dictionary.Source.LOCAL
+    assert row.source == Dictionary.Source.MANUAL
     assert Dictionary.add_local("ab") is False
     assert Dictionary.add_local("raiden") is False
 
 
-def test_matches_in_word_boundary_skips_url_and_empty_zh():
+def test_add_local_skips_not_proper():
+    Dictionary.create(en="Vision", zh="", source=Dictionary.Source.NOT_PROPER)
+    assert Dictionary.add_local("Vision") is False
+    row = Dictionary.get(Dictionary.en == "Vision")
+    assert row.source == Dictionary.Source.NOT_PROPER
+
+
+def test_matches_in_skips_url_empty_zh_and_not_proper():
     Dictionary.create(en="Zhongli", zh="钟离", source=Dictionary.Source.GENSHIN_DICTIONARY)
     Dictionary.create(en="Inazuma", zh="稻妻", source=Dictionary.Source.GENSHIN_DICTIONARY)
-    Dictionary.create(en="Ghost", zh="", source=Dictionary.Source.LOCAL)
+    Dictionary.create(en="Ghost", zh="", source=Dictionary.Source.MANUAL)
+    Dictionary.create(en="Vision", zh="神之眼", source=Dictionary.Source.NOT_PROPER)
     text = (
-        "zhongli visited Inazuman lands. "
+        "zhongli visited Inazuman lands. Vision. "
         "See https://genshin-impact.fandom.com/wiki/Inazuma and Ghost."
     )
     hits = Dictionary.matches_in(text)
@@ -33,16 +75,21 @@ def test_matches_in_word_boundary_skips_url_and_empty_zh():
     assert "Zhongli" in names
     assert "Inazuma" not in names
     assert "Ghost" not in names
+    assert "Vision" not in names
+    assert Dictionary.to_zh("Vision") is None
 
 
-def test_sync_replaces_genshin_keeps_local():
+def test_sync_replaces_genshin_keeps_unmatched_upgrades_not_proper():
     Dictionary.create(en="Old", zh="旧", source=Dictionary.Source.GENSHIN_DICTIONARY)
-    Dictionary.create(en="KeepMe", zh="", source=Dictionary.Source.LOCAL)
-    Dictionary.create(en="upgrade", zh="", source=Dictionary.Source.LOCAL)
+    Dictionary.create(en="KeepMe", zh="", source=Dictionary.Source.MANUAL)
+    Dictionary.create(en="upgrade", zh="", source=Dictionary.Source.MANUAL)
+    Dictionary.create(en="SkipMe", zh="跳过", source=Dictionary.Source.NOT_PROPER)
+    Dictionary.create(en="StayOut", zh="留下", source=Dictionary.Source.NOT_PROPER)
 
     payload = [
         {"en": "Zhongli", "zhCN": "钟离"},
         {"en": " \"Upgrade\" ", "zhCN": "「升级」"},
+        {"en": "SkipMe", "zhCN": "官中"},
     ]
     fake = MagicMock()
     fake.raise_for_status = MagicMock()
@@ -51,11 +98,192 @@ def test_sync_replaces_genshin_keeps_local():
     with patch("models.dictionary.requests.get", return_value=fake):
         n = Dictionary.sync()
 
-    assert n == 2
+    assert n == 3
     assert Dictionary.get_or_none(Dictionary.en == "Old") is None
     local = Dictionary.get(Dictionary.en == "KeepMe")
-    assert local.source == Dictionary.Source.LOCAL
+    assert local.source == Dictionary.Source.MANUAL
     upgraded = Dictionary.get(Dictionary.en == "Upgrade")
     assert upgraded.zh == "升级"
     assert upgraded.source == Dictionary.Source.GENSHIN_DICTIONARY
+    official = Dictionary.get(Dictionary.en == "SkipMe")
+    assert official.source == Dictionary.Source.GENSHIN_DICTIONARY
+    assert official.zh == "官中"
+    leftover = Dictionary.get(Dictionary.en == "StayOut")
+    assert leftover.source == Dictionary.Source.NOT_PROPER
+    assert leftover.zh == "留下"
+    assert Dictionary.to_zh("SkipMe") == "官中"
     assert Dictionary.to_zh("Zhongli") == "钟离"
+
+
+def test_zh_from_other_languages_single_and_multi():
+    assert _zh_from_other_languages(_TRI_WT, "Tri-Commission") == "三奉行"
+    assert _zh_from_other_languages(_XIAO_WT, "Alatus") == "金鹏"
+    assert _zh_from_other_languages(_XIAO_WT, "Xiao") == "魈"
+    assert _zh_from_other_languages(_XIAO_WT, "Zhongli") is None
+    assert _zh_from_other_languages("==Trivia==\nNo table.", "Xiao") is None
+
+
+def test_lookup_wiki_zh_exact_title():
+    crawler = MagicMock()
+
+    def fake_get(_url, *, params=None, **_kwargs):
+        action = (params or {}).get("action")
+        if action == "query" and "titles" in (params or {}):
+            title = params["titles"]
+            return _json_response(
+                {"query": {"pages": {"1": {"pageid": 1, "title": title}}}}
+            )
+        if action == "parse":
+            return _json_response(
+                {"parse": {"title": params["page"], "wikitext": {"*": _TRI_WT}}}
+            )
+        raise AssertionError(params)
+
+    crawler.get.side_effect = fake_get
+    wiki = FandomWikiCrawler(crawler=crawler)
+    assert Dictionary.lookup_wiki_zh("Tri-Commission!", crawler=wiki) == "三奉行"
+
+
+def test_lookup_wiki_zh_search_fallback_multi_group():
+    crawler = MagicMock()
+
+    def fake_get(_url, *, params=None, **_kwargs):
+        action = (params or {}).get("action")
+        if action == "query" and params.get("list") == "search":
+            return _json_response({"query": {"search": [{"title": "Xiao"}]}})
+        if action == "query" and "titles" in (params or {}):
+            title = params["titles"]
+            if title == "Alatus":
+                return _json_response(
+                    {"query": {"pages": {"-1": {"title": title, "missing": ""}}}}
+                )
+            return _json_response(
+                {"query": {"pages": {"1": {"pageid": 1, "title": title}}}}
+            )
+        if action == "parse":
+            return _json_response(
+                {"parse": {"title": params["page"], "wikitext": {"*": _XIAO_WT}}}
+            )
+        raise AssertionError(params)
+
+    crawler.get.side_effect = fake_get
+    wiki = FandomWikiCrawler(crawler=crawler)
+    assert Dictionary.lookup_wiki_zh("Alatus", crawler=wiki) == "金鹏"
+
+
+def test_fill_from_wiki_writes_source_wiki():
+    Dictionary.create(en="Alatus", zh="", source=Dictionary.Source.MANUAL)
+    wiki = MagicMock()
+    wiki.resolve_title.return_value = "Xiao"
+    wiki.fetch_wikitext.return_value = _XIAO_WT
+    assert Dictionary.fill_from_wiki("Alatus", crawler=wiki) is True
+    row = Dictionary.get(Dictionary.en == "Alatus")
+    assert row.zh == "金鹏"
+    assert row.source == Dictionary.Source.WIKI
+
+
+def test_fill_from_wiki_miss_keeps_manual():
+    Dictionary.create(en="Nope", zh="", source=Dictionary.Source.MANUAL)
+    wiki = MagicMock()
+    wiki.resolve_title.return_value = None
+    assert Dictionary.fill_from_wiki("Nope", crawler=wiki) is False
+    row = Dictionary.get(Dictionary.en == "Nope")
+    assert row.zh == ""
+    assert row.source == Dictionary.Source.MANUAL
+
+
+def test_lookup_wiki_zh_empty_and_crawler_error():
+    assert Dictionary.lookup_wiki_zh("  ") is None
+    wiki = MagicMock()
+    wiki.resolve_title.side_effect = CrawlerError("timeout")
+    assert Dictionary.lookup_wiki_zh("Xiao", crawler=wiki) is None
+
+
+def test_fill_from_wiki_overwrites_not_proper():
+    Dictionary.create(en="Vision", zh="", source=Dictionary.Source.NOT_PROPER)
+    wiki = MagicMock()
+    wiki.resolve_title.return_value = "Vision"
+    wiki.fetch_wikitext.return_value = (
+        "{{Other Languages\n|en = Vision\n|zhs = 神之眼\n}}"
+    )
+    assert Dictionary.fill_from_wiki("Vision", crawler=wiki) is True
+    row = Dictionary.get(Dictionary.en == "Vision")
+    assert row.source == Dictionary.Source.WIKI
+    assert row.zh == "神之眼"
+
+
+def test_fill_from_wiki_skips_genshin_dictionary():
+    Dictionary.create(
+        en="Zhongli", zh="钟离", source=Dictionary.Source.GENSHIN_DICTIONARY
+    )
+    wiki = MagicMock()
+    wiki.resolve_title.return_value = "Zhongli"
+    wiki.fetch_wikitext.return_value = (
+        "{{Other Languages\n|en = Zhongli\n|zhs = 岩王帝君\n}}"
+    )
+    assert Dictionary.fill_from_wiki("Zhongli", crawler=wiki) is False
+    row = Dictionary.get(Dictionary.en == "Zhongli")
+    assert row.source == Dictionary.Source.GENSHIN_DICTIONARY
+    assert row.zh == "钟离"
+
+
+def test_fill_from_wiki_creates_missing_row():
+    wiki = MagicMock()
+    wiki.resolve_title.return_value = "Xiao"
+    wiki.fetch_wikitext.return_value = _XIAO_WT
+    assert Dictionary.fill_from_wiki("Xiao", crawler=wiki) is True
+    row = Dictionary.get(Dictionary.en == "Xiao")
+    assert row.zh == "魈"
+    assert row.source == Dictionary.Source.WIKI
+
+
+def test_resolve_title_missing_and_empty_search():
+    crawler = MagicMock()
+
+    def fake_get(_url, *, params=None, **_kwargs):
+        if (params or {}).get("list") == "search":
+            return _json_response({"query": {"search": []}})
+        return _json_response(
+            {"query": {"pages": {"-1": {"title": "Nope", "missing": ""}}}}
+        )
+
+    crawler.get.side_effect = fake_get
+    assert FandomWikiCrawler(crawler=crawler).resolve_title("Nope") is None
+
+
+def test_search_requires_two_chars_and_paginates():
+    Dictionary.create(en="Zhongli", zh="钟离", source=Dictionary.Source.GENSHIN_DICTIONARY)
+    Dictionary.create(en="Xiao", zh="魈", source=Dictionary.Source.WIKI)
+    Dictionary.create(en="Alatus", zh="金鹏", source=Dictionary.Source.MANUAL)
+    rows, total = Dictionary.search("x")
+    assert rows == []
+    assert total == 0
+    rows, total = Dictionary.search("ia")
+    assert total == 1
+    assert rows[0].en == "Xiao"
+    rows, total = Dictionary.search("at")
+    assert total == 1
+    assert rows[0].en == "Alatus"
+    rows, total = Dictionary.search("钟离")
+    assert total == 1
+    assert rows[0].en == "Zhongli"
+    page, total = Dictionary.search("a", offset=0, limit=1)
+    assert total == 0
+    page, total = Dictionary.search("at", offset=0, limit=1)
+    assert total == 1
+    assert page[0].en == "Alatus"
+
+
+def test_update_entry_and_lookup_many():
+    Dictionary.create(en="Xiao", zh="", source=Dictionary.Source.MANUAL)
+    assert Dictionary.update_entry("nope", zh="x") is False
+    assert Dictionary.update_entry("Xiao", zh="魈", source=Dictionary.Source.WIKI) is True
+    row = Dictionary.get(Dictionary.en == "Xiao")
+    assert row.zh == "魈"
+    assert row.source == Dictionary.Source.WIKI
+
+    wiki = MagicMock()
+    wiki.resolve_title.return_value = None
+    filled, missed = Dictionary.lookup_many(["Nope", "  "], crawler=wiki)
+    assert filled == []
+    assert missed == ["Nope"]

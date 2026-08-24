@@ -33,8 +33,18 @@ def test_summarize_ok(client):
         source_url="https://example.test/wiki/Mondstadt",
     )
     fake = [
-        Result(chapter=chapter, summary="概述", output_path=Path("a.md")),
-        Result(chapter=chapter, summary="其二", output_path=Path("b.md")),
+        Result(
+            chapter=chapter,
+            summary="概述",
+            output_path=Path("a.md"),
+            untranslated=["Alatus"],
+        ),
+        Result(
+            chapter=chapter,
+            summary="其二",
+            output_path=Path("b.md"),
+            untranslated=["Alatus", "Naberius"],
+        ),
     ]
     with patch("api.app.do_summarize", return_value=fake) as summarize:
         res = client.post(
@@ -47,6 +57,7 @@ def test_summarize_ok(client):
     assert body["document_count"] == 2
     assert body["pages"] == ["https://example.test/wiki/Mondstadt"]
     assert body["results"][0]["slug"] == chapter.slug
+    assert body["untranslated"] == ["Alatus", "Naberius"]
     summarize.assert_called_once()
 
 
@@ -130,3 +141,40 @@ def test_ask_stream_sse(client):
     assert payloads[0] == {"type": "delta", "text": "岩"}
     assert payloads[-1]["type"] == "done"
     assert payloads[-1]["answer"] == "岩神"
+
+
+def test_dictionary_search_requires_two_chars(client):
+    res = client.get("/dictionary?q=x")
+    assert res.status_code == 400
+
+
+def test_dictionary_search_ok(client):
+    row = type("Row", (), {"en": "Xiao", "zh": "魈", "source": 2})()
+    with patch("api.app.Dictionary.search", return_value=([row], 1)) as search:
+        res = client.get("/dictionary?q=xi&offset=0&limit=50")
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["total"] == 1
+    assert body["items"][0] == {"en": "Xiao", "zh": "魈", "source": 2}
+    search.assert_called_once_with("xi", offset=0, limit=50)
+
+
+def test_dictionary_patch_ok_and_404(client):
+    with patch("api.app.Dictionary.update_entry", return_value=True) as updated:
+        res = client.patch("/dictionary", json={"en": "Xiao", "zh": "魈", "source": 2})
+    assert res.status_code == 200
+    updated.assert_called_once()
+    with patch("api.app.Dictionary.update_entry", return_value=False):
+        res = client.patch("/dictionary", json={"en": "Missing"})
+    assert res.status_code == 404
+
+
+def test_dictionary_lookup_ok(client):
+    with patch(
+        "api.app.Dictionary.lookup_many",
+        return_value=(["Alatus"], ["Nope"]),
+    ) as lookup:
+        res = client.post("/dictionary/lookup", json={"terms": ["Alatus", "Nope"]})
+    assert res.status_code == 200
+    assert res.get_json() == {"filled": ["Alatus"], "missed": ["Nope"]}
+    lookup.assert_called_once()

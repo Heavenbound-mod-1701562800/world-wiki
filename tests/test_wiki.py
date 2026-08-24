@@ -7,6 +7,7 @@ import pytest
 from bs4 import BeautifulSoup
 
 from libs.page_store import Page
+from models.dictionary import Dictionary
 from models.wiki import Chapter, Citation, Wiki, _parse_summary_json
 
 _SAMPLE_HTML = """
@@ -94,6 +95,7 @@ def test_run_local_html_writes_md_and_marks_done(tmp_path):
     assert results
     assert all(item.output_path.is_file() for item in results)
     assert "概述" in results[0].output_path.read_text(encoding="utf-8")
+    assert results[0].untranslated == []
     row = Page.get(Page.url == str(src.resolve()))
     assert row.status == "done"
     assert row.chapter_ok == row.chapter_total
@@ -129,6 +131,24 @@ def test_run_one_chapter_fail_is_partial(tmp_path):
     row = Page.get(Page.url == str(src.resolve()))
     assert row.status == "partial"
     assert row.chapter_ok == 1
+
+
+def test_run_collects_untranslated(tmp_path):
+    src = tmp_path / "page.html"
+    src.write_text(_SAMPLE_HTML, encoding="utf-8")
+    out = tmp_path / "summaries"
+    wiki = Wiki(llm=MagicMock(), output_dir=out, min_chapter_chars=10)
+
+    def summarize_chapter(_chapter: Chapter):
+        return "概述", ["Alatus", "Alatus"]
+
+    wiki._summarize_chapter = summarize_chapter  # type: ignore[method-assign]
+    results = wiki.run(src)
+    names = sorted({name for item in results for name in item.untranslated})
+    assert names == ["Alatus"]
+    row = Dictionary.get(Dictionary.en == "Alatus")
+    assert row.source == Dictionary.Source.MANUAL
+    assert row.zh == ""
 
 
 def test_load_local_mediawiki_json(tmp_path):

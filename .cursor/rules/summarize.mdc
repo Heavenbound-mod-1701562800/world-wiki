@@ -16,6 +16,6 @@ alwaysApply: false
 
 ## 精简 prompt
 
-入模前 `Dictionary.matches_in` 对本章做大小写不敏感检索（只收已有中文的词），命中作为「专名对照」。原文不替换。模型只输出 JSON：`summary`（精简 markdown）和 `untranslated`（对照表未覆盖、须保持英文的专名）；调用带 `response_format={"type": "json_object"}`。解析失败则该章跳过。`summary` 写入 md；`untranslated` 经 `_text` 清洗后 `Dictionary.add_local`（`source=2`，`zh` 空）。禁止自行音译。NPC 对话必须写成「据某某所述」。超时见 `LLM_TIMEOUT` 和 `chat()` 重试。
+入模前 `Dictionary.matches_in` 对本章做大小写不敏感检索（只收已有中文的词，跳过 `source=-1`），命中作为「专名对照」。原文不替换。模型只输出 JSON：`summary`（精简 markdown）和 `untranslated`（对照表未覆盖、须保持英文的专名）；调用带 `response_format={"type": "json_object"}`。解析失败则该章跳过。`summary` 写入 md；`untranslated` 经 `clean_text` 清洗后 `Dictionary.add_local`（`source=3`，`zh` 空）。禁止自行音译。NPC 对话必须写成「据某某所述」。超时见 `LLM_TIMEOUT` 和 `chat()` 重试。
 
-词表：`source=1` 为 Genshin Dictionary（https://dataset.genshin-dictionary.com/words.json ），`source=2` 为本地补录。`sync()` 不覆盖 source=2。已有 md 需重新 summarize 才会更新。
+词表优先级 **`1 > 2 > 3 = -1`**：`1` Genshin Dictionary（https://dataset.genshin-dictionary.com/words.json ），`2` Wiki Other Languages，`3` 手动/总结未译，`-1` 不当专名。`sync()` 命中升为 1；`fill_from_wiki` 写成 2（不降级 1）；`add_local` 无同行才写成 3。`lookup_wiki_zh` / `fill_from_wiki` 按组对 `en` 再取 `zhs`。已有 md 需重新 summarize 才会更新。

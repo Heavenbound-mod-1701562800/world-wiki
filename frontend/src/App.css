@@ -523,3 +523,78 @@ textarea {
 .admin-status-pending {
   background: rgba(31, 111, 106, 0.08);
 }
+
+.admin-search {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 10px 14px;
+  background: #fffdf8;
+  color: var(--ink);
+  margin-bottom: 14px;
+}
+
+.admin-search:focus {
+  outline: 2px solid rgba(31, 111, 106, 0.25);
+  outline-offset: 1px;
+}
+
+.admin-table tr.is-editing {
+  background: rgba(31, 111, 106, 0.08);
+}
+
+.admin-table tbody tr {
+  cursor: pointer;
+}
+
+.admin-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.admin-pager button,
+.admin-edit button {
+  border: 1px solid var(--line);
+  background: #fffdf8;
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.admin-pager button:disabled,
+.admin-edit button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.admin-edit {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+}
+
+.admin-edit label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+.admin-edit input,
+.admin-edit select {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #fffdf8;
+  color: var(--ink);
+}
+
+.admin-untranslated .is-filled {
+  color: var(--accent);
+}
