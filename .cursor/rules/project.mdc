@@ -5,12 +5,12 @@ alwaysApply: true
 
 # world-wiki
 
-原神世界观 RAG：Fandom Wiki → 章节精简 md → Chroma 检索 → 问答。不要引入 LangChain。
+原神世界观 RAG：Fandom Wiki → 英文章节 md → Chroma 检索 → 问答（资料+词表对照）。不要引入 LangChain。
 
 ## 分层
 
-- `libs/`：LLM、爬虫、Chroma、peewee（`libs/db.py`）、页面目录、任务队列
-- `models/`：Wiki 总结、Dictionary 中英词表、Ingest、QA；对外入口 `models/__init__.py`
+- `libs/`：LLM、爬虫、Chroma、peewee（`libs/db.py`）、页面目录、任务队列、`utils`（如 `clean_text`）
+- `models/`：Wiki 抓取写英文 md、Dictionary 中英词表、Ingest、QA；对外入口 `models/__init__.py`
 - `api/app.py`：Flask（`/summarize` `/ingest` `/ask` `/pages` `/health`）并托管 `frontend/dist`
 - `frontend/`：Vite + React；开发走代理，生产 `npm run build` 后由 Flask 提供
 - `schema/schemas.sql`：SQLite 表现状（库文件仍在 `data/pages.sqlite`）
@@ -19,13 +19,13 @@ alwaysApply: true
 ## 数据（均在 gitignore 的 `data/`）
 
 - `raw/`：下载的 Wiki HTML
-- `summaries/`：总结 md（入库文本）
+- `summaries/`：英文章节 md（入库文本）
 - `chroma/`：向量库
-- `pages.sqlite`：peewee 模型 `Page` / `Dictionary`；表结构见 [`schema/schemas.sql`](schema/schemas.sql)。`source=1` 来自 [Genshin Dictionary](https://genshin-dictionary.com) 的 https://dataset.genshin-dictionary.com/words.json （只保留 `en` / `zhCN`）；`source=2` 是总结时本地补录的未译专名（`zh` 可空）。`Dictionary.sync()` 只替换 source=1，不删 source=2；genshin 命中的本地行升级为 source=1。
+- `pages.sqlite`：peewee 模型 `Page` / `Dictionary`；表结构见 [`schema/schemas.sql`](schema/schemas.sql)。`source=1` 来自 [Genshin Dictionary](https://genshin-dictionary.com) 的 https://dataset.genshin-dictionary.com/words.json （只保留 `en` / `zhCN`）；`source=2` 是 Wiki Other Languages 回填（抓取时解析当前页 OL 表，或 Admin `fill_from_wiki`）；`source=3` 是手动未译（`zh` 可空）；`source=-1` 单独出现时不当专名。**覆盖优先级 `1 > 2 > 3 = -1`**（不要用 source 整数值比大小）。`sync()` 命中则写成 1（覆盖 2/3/-1），未命中的 2/3/-1 保留。`en`/`zh` 里用空格+`/`+空格分隔的别名会展开为笛卡尔积（任一侧都能对译到另一侧任一；`50/50` 这类不含空格的不拆）。`fill_from_wiki` / `add_from_wiki_pairs` 写成 2（覆盖 3/-1，不降级 1）。`add_local` 只在没有同行时写成 3。
 
 密钥只在 `.env` / `.env.local`。未要求不要 commit、不要改 git config。
 
 ## 两条硬约定
 
-- 出处必须写进即将 embedding 的 **document 正文**，不要只放 Chroma metadata（QA 只看 document）
+- 〔reference〕必须写进即将 embedding 的 **document 正文**，不要只放 Chroma metadata（QA 只看 document）
 - 不抓引用目标页；脚注原文默认可信。不把每条引用拆成独立向量

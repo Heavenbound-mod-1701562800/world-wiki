@@ -61,11 +61,11 @@ print(Ingest().run())  # 按 hash 增量入库
 print(QA().ask("风神和蒙德的关系是什么？").answer)
 
 # 中英专名表：Dictionary 即 peewee 模型
-Dictionary.sync()  # 只刷新 source=1（Genshin Dictionary），保留本地补录
+Dictionary.sync()  # 优先级 1>2>3=-1：命中升为 1，未命中的 2/3/-1 保留
 print(Dictionary.to_zh("Zhongli"))  # 钟离
 ```
 
-中英词表来自 [Genshin Dictionary](https://genshin-dictionary.com) 开放数据（只保留 `en` / `zhCN`），下载地址 https://dataset.genshin-dictionary.com/words.json 。许可见 [开放数据与 API](https://genshin-dictionary.com/zh-CN/opendata)：可修改、再分发。入库表是 `data/pages.sqlite` 的 `dictionary`（`source=1` 官中，`source=2` 总结补录、中文可空）。
+中英词表来自 [Genshin Dictionary](https://genshin-dictionary.com) 开放数据（只保留 `en` / `zhCN`），下载地址 https://dataset.genshin-dictionary.com/words.json 。许可见 [开放数据与 API](https://genshin-dictionary.com/zh-CN/opendata)：可修改、再分发。入库表是 `data/pages.sqlite` 的 `dictionary`（`source=1` 官中，`source=2` Wiki 回填，`source=3` 总结/手动未译、中文可空，`source=-1` 单独出现时不是专名）。
 
 ## 配置说明
 

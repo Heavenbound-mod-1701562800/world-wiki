@@ -48,7 +48,7 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 CRAWLER_REQUEST_INTERVAL = float(os.getenv("CRAWLER_REQUEST_INTERVAL", "0.5"))
 CRAWLER_MAX_WORKERS = int(os.getenv("CRAWLER_MAX_WORKERS", "20"))
 LLM_REQUEST_INTERVAL = float(os.getenv("LLM_REQUEST_INTERVAL", "0.2"))
-LLM_MAX_WORKERS = int(os.getenv("LLM_MAX_WORKERS", "10"))
+LLM_MAX_WORKERS = int(os.getenv("LLM_MAX_WORKERS", "4"))
 LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "300"))
 
 # 业务默认值（CLI / Flask 共用）

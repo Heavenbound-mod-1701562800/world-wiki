@@ -31,7 +31,7 @@ def _write_md(path, body: str) -> None:
 
 def test_ingest_skips_unchanged_hash(tmp_path):
     md = tmp_path / "a.md"
-    text = "# Title\n\n- 条目: Foo\n- 标题: Title\n\nhello\n"
+    text = "# Title\n\n- Entry: Foo\n- Title: Title\n\nhello\n"
     _write_md(md, text)
     store = FakeStore()
     ingest = Ingest(store=store, summaries_dir=tmp_path)
