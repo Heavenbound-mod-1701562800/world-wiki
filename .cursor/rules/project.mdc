@@ -27,5 +27,5 @@ alwaysApply: true
 
 ## 两条硬约定
 
-- 出处必须写进即将 embedding 的 **document 正文**，不要只放 Chroma metadata（QA 只看 document）
+- 〔reference〕必须写进即将 embedding 的 **document 正文**，不要只放 Chroma metadata（QA 只看 document）
 - 不抓引用目标页；脚注原文默认可信。不把每条引用拆成独立向量

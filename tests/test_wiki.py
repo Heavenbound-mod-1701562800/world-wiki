@@ -62,7 +62,7 @@ def test_citation_bind_inlines_footnote():
     assert len(cites) == 1
     assert "Naoe" in cites[0].label
     assert cites[0].url.endswith("/wiki/Naoe")
-    assert "〔出处：" in root.get_text()
+    assert "〔reference:" in root.get_text()
 
 
 def test_chapter_slug_sanitizes():
@@ -80,6 +80,31 @@ def test_split_chapters_from_local_html():
     assert "Old World" in titles
     assert "Archon War" in titles
     assert all(c.entry == "Mondstadt" for c in chapters)
+
+
+def test_split_drops_page_tabs_from_preface():
+    html = """
+    <html><body>
+      <h1>Inazuma/Culture</h1>
+      <article id="mw-content-text">
+        <div class="custom-tabs-default custom-tabs">
+          <span class="inactive-tab"><a href="/wiki/Inazuma">Overview</a></span>
+          <span class="active-tab"><strong>Culture</strong></span>
+          <span class="inactive-tab"><a href="/wiki/Inazuma/History">History</a></span>
+          <span class="inactive-tab"><a href="/wiki/Inazuma/Design">Design</a></span>
+          <span class="inactive-tab"><a href="/wiki/Inazuma/Gallery">Gallery</a></span>
+        </div>
+        <p>The Inazuma archipelago is sub-divided into three main factions.</p>
+        <h2>Fashion</h2>
+        <p>Women in Inazuma tend to have bangs.</p>
+      </article>
+    </body></html>
+    """
+    chapters = Wiki(min_chapter_chars=10)._split_chapters(html)
+    intro = next(c for c in chapters if c.title == "Introduction")
+    assert "The Inazuma archipelago" in intro.content
+    assert "Overview" not in intro.content
+    assert "Gallery" not in intro.content
 
 
 def test_split_drops_image_gallery_captions():

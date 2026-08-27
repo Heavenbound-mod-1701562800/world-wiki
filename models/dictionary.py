@@ -67,7 +67,7 @@ class Dictionary(BaseModel):
         rows = cls._fetch_rows()
         incoming_folds = {en.casefold() for en, _ in rows}
         with database.atomic():
-            cls.delete().where(
+            cls.delete().where(  # pylint: disable=no-value-for-parameter
                 cls.source == cls.Source.GENSHIN_DICTIONARY
             ).execute()
             covered = [
@@ -76,7 +76,9 @@ class Dictionary(BaseModel):
                 if clean_text(row.en).casefold() in incoming_folds
             ]
             if covered:
-                cls.delete().where(cls.en.in_(covered)).execute()
+                cls.delete().where(  # pylint: disable=no-value-for-parameter
+                    cls.en.in_(covered)
+                ).execute()
             for en, zh in rows:
                 cls.create(en=en, zh=zh, source=cls.Source.GENSHIN_DICTIONARY)
         logger.info("词表已同步：%d 条官中（%s）", len(rows), WORDS_JSON_URL)

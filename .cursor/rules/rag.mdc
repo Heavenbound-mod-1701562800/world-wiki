@@ -10,4 +10,4 @@ alwaysApply: false
 
 `Ingest` 扫描 `data/summaries/*.md`，整篇 embedding；`content_hash` 未变则跳过。`--ingest --reset` 才清空重建。
 
-QA 把检索到的 `chunk.document`（英文 md）和 `Dictionary.matches_in` 命中的专名对照一起塞进 prompt。回答用中文，专名用对照表译名。带〔出处〕或 NPC 对话的内容必须限定语气，不得说成确定设定。不要在回答里写「根据某某文档」。
+QA 把检索到的 `chunk.document`（英文 md）和 `Dictionary.matches_in` 命中的专名对照一起塞进 prompt。回答用中文，专名用对照表译名。带〔reference〕或 NPC 对话的内容必须限定语气，不得说成确定设定。来源标点按标签：`Book:` 用《》，武器/道具用「」，角色故事/地点/任务等不加书名号。不要在回答里写「根据某某文档」。

@@ -47,14 +47,14 @@ class Citation:
     ref_id: str = ""
 
     def marker(self) -> str:
-        """内联〔出处〕文本。"""
+        """内联〔reference〕文本。"""
         if self.url:
-            return f"〔出处：{self.label} | {self.url}〕"
-        return f"〔出处：{self.label}〕"
+            return f"〔reference: {self.label} | {self.url}〕"
+        return f"〔reference: {self.label}〕"
 
     @classmethod
     def bind(cls, root: Tag, base_url: str = "") -> list[Citation]:
-        """把 sup.reference 换成内联〔出处〕标记，并返回文中每一次引用。"""
+        """把 sup.reference 换成内联〔reference〕标记，并返回文中每一次引用。"""
         origin = cls._origin(base_url)
         notes = cls._index_notes(root)
         collected: list[Citation] = []
@@ -414,7 +414,7 @@ class Wiki:
 
         for junk in root.select(
             "script, style, nav, footer, .toc, .navbox, .mw-editsection, "
-            "ol.references, .references, "
+            "ol.references, .references, .custom-tabs, "
             ".wikia-gallery, .lightbox-caption, div.thumb, figure.thumb, ul.gallery"
         ):
             junk.decompose()

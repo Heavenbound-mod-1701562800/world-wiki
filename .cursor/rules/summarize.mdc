@@ -12,10 +12,10 @@ alwaysApply: false
 
 ## Citation（与 Chapter 同级，在 wiki.py）
 
-拆章前 `Citation.bind`：把 `sup.reference` 换成 `〔出处：脚注原文 | 绝对URL〕`，再删 References。不要推断 kind，只用 label。`Chapter.citations` 只挂本章出现过的引用。md 文末 `## 出处` 来自该列表（英文脚注原文 + 链接）。
+拆章前 `Citation.bind`：把 `sup.reference` 换成 `〔reference: 脚注原文 | 绝对URL〕`，再删 References。不要推断 kind，只用 label。`Chapter.citations` 只挂本章出现过的引用。md 文末 `## Citations` 来自该列表（英文脚注原文 + 链接）。
 
 ## 英文 md
 
-拆章后每章正文是清洗过的英文原文（已含〔出处〕），写入 `## Content`；首段无 h2 时章节名为 `Introduction`。抽取文本时沿用 HTML 原文空白（不要 `get_text` 夹分隔符），`br` 换成换行，章节兄弟节点之间再换行。图片画廊/缩略图（`.wikia-gallery`、`.lightbox-caption`、`div.thumb` 等）整块丢掉，不把图下注释写进 md。标题大小写不敏感等于 `Other Languages` 的 h2 **不写 md**；从该节 wikitable 抽出 English / Chinese (Simplified)（含多组），`Dictionary.add_from_wiki_pairs` 写成 `source=2`（斜杠别名展开为笛卡尔积；覆盖 3/-1，不降级 1）。
+拆章后每章正文是清洗过的英文原文（已含〔reference〕），写入 `## Content`；首段无 h2 时章节名为 `Introduction`。抽取文本时沿用 HTML 原文空白（不要 `get_text` 夹分隔符），`br` 换成换行，章节兄弟节点之间再换行。图片画廊/缩略图（`.wikia-gallery`、`.lightbox-caption`、`div.thumb` 等）整块丢掉，不把图下注释写进 md。页顶 `div.custom-tabs`（Overview / Culture / History 这类子页 tab）同样丢掉。标题大小写不敏感等于 `Other Languages` 的 h2 **不写 md**；从该节 wikitable 抽出 English / Chinese (Simplified)（含多组），`Dictionary.add_from_wiki_pairs` 写成 `source=2`（斜杠别名展开为笛卡尔积；覆盖 3/-1，不降级 1）。
 
 词表优先级 **`1 > 2 > 3 = -1`**：`1` Genshin Dictionary（https://dataset.genshin-dictionary.com/words.json ），`2` Wiki Other Languages，`3` 手动未译，`-1` 不当专名。`sync()` 命中升为 1；`en`/`zh` 的 ` / ` 别名展开为笛卡尔积。`fill_from_wiki` / Admin lookup 仍按词条页 `en` 取 `zhs`。已有 md 需重新抓取才会更新。
