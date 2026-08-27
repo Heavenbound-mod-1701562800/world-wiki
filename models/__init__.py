@@ -40,7 +40,7 @@ def summarize(
     max_chapters: int | None = None,
     heading: str | None = None,
 ) -> list[Result]:
-    """爬取/读取页面并总结为 Markdown。"""
+    """爬取/读取页面并写成英文 Markdown。"""
     if isinstance(sources, (str, Path)):
         source_list = [sources]
     else:

@@ -21,6 +21,7 @@ WORDS_JSON_URL = "https://dataset.genshin-dictionary.com/words.json"
 _MIN_EN_LEN = 3
 _MAX_EN_LEN = 64
 _URL_RE = re.compile(r"https?://[^\s\]）>\"']+", re.IGNORECASE)
+_SLASH_ALT_RE = re.compile(r"\s+/\s+")
 _OL_PARAM_RE = re.compile(
     r"^(?:(\d+)_)?([A-Za-z0-9]+)\s*=\s*(.*)$",
     re.DOTALL,
@@ -59,38 +60,25 @@ class Dictionary(BaseModel):
 
     @classmethod
     def sync(cls) -> int:
-        """拉取 words.json。命中则写成 source=1（覆盖 2/3/-1）；未命中的 2/3/-1 保留。"""
+        """拉取 words.json。命中则写成 source=1（覆盖 2/3/-1）；未命中的 2/3/-1 保留。
+
+        en/zh 里用空格+/+空格分隔的是别名，展开为笛卡尔积：任一侧都能对译到另一侧任一。
+        """
         rows = cls._fetch_rows()
-        incoming = {en.casefold(): (en, zh) for en, zh in rows}
+        incoming_folds = {en.casefold() for en, _ in rows}
         with database.atomic():
-            by_fold: dict[str, Dictionary] = {}
-            for row in cls.select():
-                fold = clean_text(row.en).casefold()
-                if fold and fold not in by_fold:
-                    by_fold[fold] = row
-            for fold, (en, zh) in incoming.items():
-                existing = by_fold.get(fold)
-                if existing is None:
-                    cls.create(en=en, zh=zh, source=cls.Source.GENSHIN_DICTIONARY)
-                    continue
-                # 表无主键，save() 会再插一行
-                cls.update(
-                    en=en, zh=zh, source=cls.Source.GENSHIN_DICTIONARY
-                ).where(
-                    cls.en == existing.en,
-                    cls.source == existing.source,
-                ).execute()
-            stale = [
-                row
+            cls.delete().where(
+                cls.source == cls.Source.GENSHIN_DICTIONARY
+            ).execute()
+            covered = [
+                row.en
                 for row in cls.select()
-                if row.source == cls.Source.GENSHIN_DICTIONARY
-                and clean_text(row.en).casefold() not in incoming
+                if clean_text(row.en).casefold() in incoming_folds
             ]
-            if stale:
-                cls.delete().where(
-                    cls.en.in_([row.en for row in stale]),
-                    cls.source == cls.Source.GENSHIN_DICTIONARY,
-                ).execute()
+            if covered:
+                cls.delete().where(cls.en.in_(covered)).execute()
+            for en, zh in rows:
+                cls.create(en=en, zh=zh, source=cls.Source.GENSHIN_DICTIONARY)
         logger.info("词表已同步：%d 条官中（%s）", len(rows), WORDS_JSON_URL)
         return len(rows)
 
@@ -226,6 +214,55 @@ class Dictionary(BaseModel):
         return True
 
     @classmethod
+    def add_from_wiki_pairs(cls, pairs: Iterable[tuple[str, str]]) -> int:
+        """把 Other Languages 的 en/zhs 写成 source=2（覆盖 3/-1，不降级 1）。"""
+        written = 0
+        for raw_en, raw_zh in pairs:
+            en = clean_text(raw_en)
+            zh = clean_text(raw_zh)
+            if not en or not zh:
+                continue
+            for item_en, item_zh in _expand_slash_pairs(en, zh):
+                if cls._add_wiki_pair(item_en, item_zh):
+                    written += 1
+        return written
+
+    @classmethod
+    def _add_wiki_pair(cls, en: str, zh: str) -> bool:
+        """同 en+zh 或空 zh 则写成 2；已有更高级（如 1）则跳过，否则新插一行。"""
+        fold = en.casefold()
+        same = [
+            row
+            for row in cls.select()
+            if clean_text(row.en).casefold() == fold
+        ]
+        for row in same:
+            if clean_text(row.zh) == zh:
+                if not cls._can_overwrite(cls.Source.WIKI, row.source):
+                    return False
+                cls.update(en=en, zh=zh, source=cls.Source.WIKI).where(
+                    cls.en == row.en,
+                    cls.source == row.source,
+                    cls.zh == row.zh,
+                ).execute()
+                return True
+        for row in same:
+            if not clean_text(row.zh) and cls._can_overwrite(
+                cls.Source.WIKI, row.source
+            ):
+                cls.update(zh=zh, source=cls.Source.WIKI).where(
+                    cls.en == row.en,
+                    cls.source == row.source,
+                ).execute()
+                return True
+        if any(
+            not cls._can_overwrite(cls.Source.WIKI, row.source) for row in same
+        ):
+            return False
+        cls.create(en=en, zh=zh, source=cls.Source.WIKI)
+        return True
+
+    @classmethod
     def _can_overwrite(cls, incoming: int, existing: int) -> bool:
         """同级只允许刷新同一 source；更低级不能覆盖更高级。"""
         if incoming == existing:
@@ -240,7 +277,8 @@ class Dictionary(BaseModel):
         key = clean_text(en)
         if not key:
             return None
-        row = cls.get_or_none(cls.en == key)
+        # 同一 en 可能对应多个 zh（别名笛卡尔积）
+        row = cls.select().where(cls.en == key).first()
         if (
             row is None
             or not row.zh
@@ -253,7 +291,7 @@ class Dictionary(BaseModel):
     def matches_in(cls, text: str) -> list[tuple[str, str]]:
         """正文里出现过的专名（大小写不敏感）；不含 URL；跳过未译和 -1。"""
         haystack = _URL_RE.sub(" ", text or "").casefold()
-        by_fold: dict[str, tuple[str, str]] = {}
+        by_fold: dict[str, tuple[str, list[str]]] = {}
         for row in cls.select(cls.en, cls.zh, cls.source):
             if row.source == cls.Source.NOT_PROPER:
                 continue
@@ -261,9 +299,9 @@ class Dictionary(BaseModel):
             zh = clean_text(row.zh)
             if not zh or not _MIN_EN_LEN <= len(en) <= _MAX_EN_LEN:
                 continue
-            folded = en.casefold()
-            if folded not in by_fold:
-                by_fold[folded] = (en, zh)
+            zhs = by_fold.setdefault(en.casefold(), (en, []))[1]
+            if zh not in zhs:
+                zhs.append(zh)
 
         hits: dict[str, tuple[str, str]] = {}
         hlen = len(haystack)
@@ -277,7 +315,7 @@ class Dictionary(BaseModel):
                     continue
                 found = by_fold.get(haystack[i:j])
                 if found:
-                    hits[found[0].casefold()] = found
+                    hits[found[0].casefold()] = (found[0], " / ".join(found[1]))
 
         return sorted(hits.values(), key=lambda item: len(item[0]), reverse=True)
 
@@ -303,14 +341,25 @@ class Dictionary(BaseModel):
             zh = clean_text(item.get("zhCN"))
             if not en or not zh:
                 continue
-            pair = (en, zh)
-            if pair in seen:
-                continue
-            seen.add(pair)
-            rows.append(pair)
+            for pair in _expand_slash_pairs(en, zh):
+                if pair in seen:
+                    continue
+                seen.add(pair)
+                rows.append(pair)
         if not rows:
             raise RuntimeError("词表为空：words.json 中没有同时含 en / zhCN 的条目")
         return rows
+
+
+def _expand_slash_pairs(en: str, zh: str) -> list[tuple[str, str]]:
+    """'A / B' × '甲 / 乙'：任一侧都能对译到另一侧任一。'50/50' 不含空格，不拆。"""
+    ens = [clean_text(part) for part in _SLASH_ALT_RE.split(en)]
+    zhs = [clean_text(part) for part in _SLASH_ALT_RE.split(zh)]
+    ens = [part for part in ens if part]
+    zhs = [part for part in zhs if part]
+    if not ens or not zhs:
+        return []
+    return [(e, z) for e in ens for z in zhs]
 
 
 def _extract_template(wikitext: str, name: str) -> Optional[str]:

@@ -29,7 +29,7 @@ def parse_args() -> argparse.Namespace:
     mode.add_argument(
         "--summarize",
         action="store_true",
-        help="爬取/读取页面并总结为 Markdown",
+        help="爬取/读取页面并写成英文 Markdown",
     )
     mode.add_argument(
         "--ingest",
@@ -53,7 +53,7 @@ def parse_args() -> argparse.Namespace:
         "--url",
         action="append",
         default=[],
-        help="从该 URL 下载页面后再总结（可重复）",
+        help="从该 URL 下载页面后再拆章写成 Markdown（可重复）",
     )
     parser.add_argument(
         "-o",

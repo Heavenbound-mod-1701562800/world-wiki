@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 from libs.crawler import CrawlerError, FandomWikiCrawler
 from libs.utils import clean_text
-from models.dictionary import Dictionary, _zh_from_other_languages
+from models.dictionary import Dictionary, _expand_slash_pairs, _zh_from_other_languages
 
 _TRI_WT = """
 ==Other Languages==
@@ -113,6 +113,73 @@ def test_sync_replaces_genshin_keeps_unmatched_upgrades_not_proper():
     assert leftover.zh == "留下"
     assert Dictionary.to_zh("SkipMe") == "官中"
     assert Dictionary.to_zh("Zhongli") == "钟离"
+
+
+def test_expand_slash_pairs_cartesian_and_keeps_50_50():
+    assert _expand_slash_pairs("Zhongli", "钟离") == [("Zhongli", "钟离")]
+    assert _expand_slash_pairs("comrade / partner", "伙伴 / 搭档") == [
+        ("comrade", "伙伴"),
+        ("comrade", "搭档"),
+        ("partner", "伙伴"),
+        ("partner", "搭档"),
+    ]
+    assert _expand_slash_pairs("milady / my lady", "小姐") == [
+        ("milady", "小姐"),
+        ("my lady", "小姐"),
+    ]
+    assert _expand_slash_pairs("Chihu Rock", "吃虎岩 / 螭虎岩") == [
+        ("Chihu Rock", "吃虎岩"),
+        ("Chihu Rock", "螭虎岩"),
+    ]
+    assert _expand_slash_pairs("lose 50/50", "（小保底）歪了") == [
+        ("lose 50/50", "（小保底）歪了"),
+    ]
+
+
+def test_sync_expands_slash_aliases():
+    Dictionary.create(
+        en="comrade / partner",
+        zh="伙伴 / 搭档",
+        source=Dictionary.Source.GENSHIN_DICTIONARY,
+    )
+    payload = [
+        {"en": "comrade / partner", "zhCN": "伙伴 / 搭档"},
+        {"en": "Chihu Rock", "zhCN": "吃虎岩 / 螭虎岩"},
+        {"en": "milady / my lady", "zhCN": "小姐"},
+        {"en": "lose 50/50", "zhCN": "（小保底）歪了"},
+    ]
+    fake = MagicMock()
+    fake.raise_for_status = MagicMock()
+    fake.json.return_value = payload
+
+    with patch("models.dictionary.requests.get", return_value=fake):
+        n = Dictionary.sync()
+
+    assert n == 9
+    pairs = {(row.en, row.zh) for row in Dictionary.select()}
+    assert pairs == {
+        ("comrade", "伙伴"),
+        ("comrade", "搭档"),
+        ("partner", "伙伴"),
+        ("partner", "搭档"),
+        ("Chihu Rock", "吃虎岩"),
+        ("Chihu Rock", "螭虎岩"),
+        ("milady", "小姐"),
+        ("my lady", "小姐"),
+        ("lose 50/50", "（小保底）歪了"),
+    }
+    assert Dictionary.to_zh("comrade") in {"伙伴", "搭档"}
+    assert Dictionary.to_zh("partner") in {"伙伴", "搭档"}
+    hits = {
+        en: zh
+        for en, zh in Dictionary.matches_in(
+            "A comrade and partner met at Chihu Rock."
+        )
+    }
+    assert hits["comrade"] == "伙伴 / 搭档"
+    assert hits["partner"] == "伙伴 / 搭档"
+    assert hits["Chihu Rock"] == "吃虎岩 / 螭虎岩"
+    assert "lose" not in hits
 
 
 def test_zh_from_other_languages_single_and_multi():
@@ -225,6 +292,32 @@ def test_fill_from_wiki_skips_genshin_dictionary():
     row = Dictionary.get(Dictionary.en == "Zhongli")
     assert row.source == Dictionary.Source.GENSHIN_DICTIONARY
     assert row.zh == "钟离"
+
+
+def test_add_from_wiki_pairs_expands_slash_and_skips_source1():
+    Dictionary.create(
+        en="Zhongli", zh="钟离", source=Dictionary.Source.GENSHIN_DICTIONARY
+    )
+    Dictionary.create(en="Ghost", zh="", source=Dictionary.Source.MANUAL)
+    n = Dictionary.add_from_wiki_pairs(
+        [
+            ("Zhongli", "岩王帝君"),
+            ("comrade / partner", "伙伴 / 搭档"),
+            ("Ghost", "鬼"),
+        ]
+    )
+    assert n == 5
+    assert Dictionary.get(Dictionary.en == "Zhongli").zh == "钟离"
+    assert Dictionary.get(Dictionary.en == "Zhongli").source == (
+        Dictionary.Source.GENSHIN_DICTIONARY
+    )
+    ghost = Dictionary.get(Dictionary.en == "Ghost")
+    assert ghost.zh == "鬼"
+    assert ghost.source == Dictionary.Source.WIKI
+    pairs = {(row.en, row.zh) for row in Dictionary.select() if row.en != "Zhongli"}
+    assert ("comrade", "伙伴") in pairs
+    assert ("partner", "搭档") in pairs
+    assert ("Ghost", "鬼") in pairs
 
 
 def test_fill_from_wiki_creates_missing_row():

@@ -1,21 +1,21 @@
 ---
-description: Wiki 抓取、引用绑定、按页总结
+description: Wiki 抓取、引用绑定、按页写成英文 Markdown
 globs: models/wiki.py,models/dictionary.py,libs/crawler.py,libs/page_store.py,libs/db.py
 alwaysApply: false
 ---
 
-# 总结流水线
+# 抓取流水线
 
-`Wiki.run` **按 URL 串行处理**（下载 → 拆章 → 该页章节可走 `llm_queue` 并行）。每页更新 peewee `Page`：`pending → fetching → summarizing → done|partial|failed`。
+`Wiki.run` **按 URL 串行处理**（下载 → 拆章 → 英文 md 落盘）。每页更新 peewee `Page`：`pending → fetching → summarizing → done|partial|failed`。抓取不再调用聊天模型。
 
 下载只走 MediaWiki `api.php?action=parse`，HTML 写入 `data/raw/`。本地 `.json` 取 `parse.text` 再包一层文章 HTML。
 
 ## Citation（与 Chapter 同级，在 wiki.py）
 
-拆章前 `Citation.bind`：把 `sup.reference` 换成 `〔出处：脚注原文 | 绝对URL〕`，再删 References。不要推断 kind，只用 label。`Chapter.citations` 只挂本章出现过的引用。md 文末 `## 出处` 来自该列表（英文脚注原文 + 链接，不经 LLM）。
+拆章前 `Citation.bind`：把 `sup.reference` 换成 `〔出处：脚注原文 | 绝对URL〕`，再删 References。不要推断 kind，只用 label。`Chapter.citations` 只挂本章出现过的引用。md 文末 `## 出处` 来自该列表（英文脚注原文 + 链接）。
 
-## 精简 prompt
+## 英文 md
 
-入模前 `Dictionary.matches_in` 对本章做大小写不敏感检索（只收已有中文的词，跳过 `source=-1`），命中作为「专名对照」。原文不替换。模型只输出 JSON：`summary`（精简 markdown）和 `untranslated`（对照表未覆盖、须保持英文的专名）；调用带 `response_format={"type": "json_object"}`。解析失败则该章跳过。`summary` 写入 md；`untranslated` 经 `clean_text` 清洗后 `Dictionary.add_local`（`source=3`，`zh` 空）。禁止自行音译。NPC 对话必须写成「据某某所述」。超时见 `LLM_TIMEOUT` 和 `chat()` 重试。
+拆章后每章正文是清洗过的英文原文（已含〔出处〕），写入 `## Content`；首段无 h2 时章节名为 `Introduction`。抽取文本时沿用 HTML 原文空白（不要 `get_text` 夹分隔符），`br` 换成换行，章节兄弟节点之间再换行。图片画廊/缩略图（`.wikia-gallery`、`.lightbox-caption`、`div.thumb` 等）整块丢掉，不把图下注释写进 md。标题大小写不敏感等于 `Other Languages` 的 h2 **不写 md**；从该节 wikitable 抽出 English / Chinese (Simplified)（含多组），`Dictionary.add_from_wiki_pairs` 写成 `source=2`（斜杠别名展开为笛卡尔积；覆盖 3/-1，不降级 1）。
 
-词表优先级 **`1 > 2 > 3 = -1`**：`1` Genshin Dictionary（https://dataset.genshin-dictionary.com/words.json ），`2` Wiki Other Languages，`3` 手动/总结未译，`-1` 不当专名。`sync()` 命中升为 1；`fill_from_wiki` 写成 2（不降级 1）；`add_local` 无同行才写成 3。`lookup_wiki_zh` / `fill_from_wiki` 按组对 `en` 再取 `zhs`。已有 md 需重新 summarize 才会更新。
+词表优先级 **`1 > 2 > 3 = -1`**：`1` Genshin Dictionary（https://dataset.genshin-dictionary.com/words.json ），`2` Wiki Other Languages，`3` 手动未译，`-1` 不当专名。`sync()` 命中升为 1；`en`/`zh` 的 ` / ` 别名展开为笛卡尔积。`fill_from_wiki` / Admin lookup 仍按词条页 `en` 取 `zhs`。已有 md 需重新抓取才会更新。

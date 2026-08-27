@@ -1,4 +1,4 @@
-"""抓取指定 HTML → 按章节拆分 → LLM 精简世界观 → 保存 Markdown。"""
+"""抓取指定 HTML → 按章节拆分 → 英文 Markdown；Other Languages 写入词典。"""
 
 from __future__ import annotations
 
@@ -15,55 +15,26 @@ from bs4 import BeautifulSoup, NavigableString, Tag
 
 import config
 from libs.crawler import FandomWikiCrawler
-from libs.llm import LLM
 from libs.page_store import Page
-from libs.task_queue import llm_queue
 from libs.utils import clean_text
 from models.dictionary import Dictionary
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_WIKI_ORIGIN = "https://genshin-impact.fandom.com"
-_JSON_FENCE_RE = re.compile(
-    r"^```(?:json)?\s*(.*?)\s*```$",
-    re.IGNORECASE | re.DOTALL,
-)
-
-DEFAULT_SYSTEM_PROMPT = """你是原神世界观资料整理助手。
-请从给定章节原文中提取并精简「世界观相关」信息，忽略玩法数值、养成攻略、活动公告、抽卡信息等。
-重点保留：人物/组织关系、地理与势力、历史事件与时间线、设定术语、重要道具/概念的含义与影响。
-只输出一个 JSON 对象，不要 markdown 围栏，不要其它说明。字段：
-- summary：简洁中文 Markdown 字符串（先一句话总览，再条目列出关键设定点）
-- untranslated：字符串数组，原文里出现、专名对照未覆盖、因此必须保持英文的专有名词
-规则：
-- 不确定或原文未明说的内容不要脑补
-- 不要复述与世界观无关的攻略废话
-- 专有名词禁止自行音译或另起中文名
-- 「专名对照」里的命中项，summary 必须用对照表中文
-- 对照表未列出的英文专名在 summary 里原样保留英文，并列入 untranslated
-- untranslated 只收专有名词，必须在原文中出现过；不要编造，不要塞普通英文词，不要列入已在对照表中的词
-- 不要写成「中文（英文）」并列
-- 可译的是普通叙述和类别说法（因果、职位描述），不是对照表以外的专有名词
-- 原文中的〔出处：…〕必须留在对应设定点后；出处里的专名规则同上；URL 可省略
-- 若出处是 NPC 对话 / 角色口述，须写明「据某某对话所述」，不要写成官方设定陈述"""
 
 
-def _parse_summary_json(raw: str) -> tuple[str, list[str]]:
-    text = (raw or "").strip()
-    fenced = _JSON_FENCE_RE.match(text)
-    if fenced:
-        text = fenced.group(1).strip()
-    data = json.loads(text)
-    if not isinstance(data, dict):
-        raise ValueError("总结不是 JSON 对象")
-    summary = data.get("summary")
-    if not isinstance(summary, str) or not summary.strip():
-        raise ValueError("JSON 缺少 summary")
-    untranslated = data.get("untranslated") or []
-    if not isinstance(untranslated, list):
-        raise ValueError("untranslated 不是 list")
-    names = [item for item in untranslated if isinstance(item, str)]
-    return summary.strip(), names
+def _element_text(node: Tag) -> str:
+    """拼出标签文本：沿用原文空白，只有 br 换成换行。"""
+    if node.name == "br":
+        return "\n"
+    parts: list[str] = []
+    for child in node.children:
+        if isinstance(child, NavigableString):
+            parts.append(str(child))
+        elif isinstance(child, Tag):
+            parts.append(_element_text(child))
+    return "".join(parts)
 
 
 @dataclass
@@ -154,7 +125,7 @@ class Citation:
 
 @dataclass
 class Chapter:
-    """一条总结单元：条目（页面/词条）+ 拆分标题。"""
+    """一条落盘单元：条目（页面/词条）+ 拆分标题。"""
 
     title: str
     content: str
@@ -174,8 +145,8 @@ class Chapter:
     @property
     def slug(self) -> str:
         """用作 md 文件名的条目__标题。"""
-        entry = self._safe_name(self.entry or "未命名条目")
-        title = self._safe_name(self.title or "未命名标题")
+        entry = self._safe_name(self.entry or "untitled")
+        title = self._safe_name(self.title or "untitled")
         if entry == title:
             return entry
         return f"{entry}__{title}"
@@ -183,20 +154,18 @@ class Chapter:
 
 @dataclass
 class Result:
-    """一章总结的落盘结果。"""
+    """一章英文正文的落盘结果。"""
 
     chapter: Chapter
     summary: str
     output_path: Path
-    untranslated: list[str] = field(default_factory=list)
 
 
 @dataclass
 class Wiki:
-    """章节级世界观提炼流水线。"""
+    """章节级英文 Markdown 流水线。"""
 
     crawler: FandomWikiCrawler = field(default_factory=FandomWikiCrawler)
-    llm: Optional[LLM] = None
     output_dir: Path = field(default_factory=lambda: config.SUMMARIES_DIR)
     heading_tags: tuple[str, ...] = ("h2",)
     content_selectors: tuple[str, ...] = (
@@ -206,7 +175,6 @@ class Wiki:
         "main",
         "body",
     )
-    system_prompt: str = DEFAULT_SYSTEM_PROMPT
     min_chapter_chars: int = 40
 
     def __post_init__(self) -> None:
@@ -219,7 +187,7 @@ class Wiki:
         output_dir: Optional[Path] = None,
         max_chapters: Optional[int] = None,
     ) -> list[Result]:
-        """加载来源（可多个）→ 按页拆章总结 → 落盘，并写入 SQLite 状态。"""
+        """加载来源（可多个）→ 按页拆章写成英文 Markdown → 落盘，并写入 SQLite 状态。"""
         if isinstance(sources, (str, Path)):
             source_list: list[str | Path] = [sources]
         else:
@@ -329,7 +297,7 @@ class Wiki:
         results, failed = self._summarize_and_save(chapters, output_dir=output_dir)
         ok = len(results)
         if ok == 0:
-            status, err = "failed", f"全部 {len(chapters)} 章总结失败"
+            status, err = "failed", f"全部 {len(chapters)} 章写入失败"
         elif failed:
             status, err = "partial", f"跳过 {failed} 章"
         else:
@@ -402,24 +370,20 @@ class Wiki:
         out_dir = Path(output_dir or self.output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        queue = llm_queue()
-        futures = [queue.submit(self._summarize_chapter, ch) for ch in chapters]
-
         results: list[Result] = []
         failed = 0
-        for chapter, future in zip(chapters, futures):
+        for chapter in chapters:
             try:
-                summary, untranslated = future.result()
+                result = self._write_chapter(chapter, out_dir)
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 failed += 1
                 logger.error(
-                    "总结失败，已跳过：%s / %s (%s)",
+                    "写入失败，已跳过：%s / %s (%s)",
                     chapter.entry or "?",
                     chapter.title,
                     exc,
                 )
                 continue
-            result = self._write_chapter(chapter, summary, untranslated, out_dir)
             results.append(result)
             Page.upsert(
                 chapter.source_url,
@@ -428,55 +392,14 @@ class Wiki:
             )
 
         if failed:
-            logger.warning("本页总结：成功 %d 章，跳过 %d 章", len(results), failed)
+            logger.warning("本页写入：成功 %d 章，跳过 %d 章", len(results), failed)
         return results, failed
 
-    def _write_chapter(
-        self,
-        chapter: Chapter,
-        summary: str,
-        untranslated: list[str],
-        out_dir: Path,
-    ) -> Result:
-        names = [clean_text(name) for name in untranslated if clean_text(name)]
-        for name in names:
-            Dictionary.add_local(name)
+    def _write_chapter(self, chapter: Chapter, out_dir: Path) -> Result:
+        body = chapter.content or ""
         path = out_dir / f"{chapter.slug}.md"
-        path.write_text(self._render_markdown(chapter, summary), encoding="utf-8")
-        return Result(
-            chapter=chapter,
-            summary=summary,
-            output_path=path,
-            untranslated=names,
-        )
-
-    def _summarize_chapter(self, chapter: Chapter) -> tuple[str, list[str]]:
-        blob = "\n".join(
-            (chapter.entry or "", chapter.title or "", chapter.content or "")
-        )
-        glossary = Dictionary.matches_in(blob)
-        if glossary:
-            glossary_block = "\n".join(f"{en} → {zh}" for en, zh in glossary)
-        else:
-            glossary_block = "（无）"
-        user_prompt = (
-            f"来源：{chapter.source_url or '未知'}\n"
-            f"条目：{chapter.entry or '未知'}\n"
-            f"标题：{chapter.title}\n\n"
-            f"专名对照：\n{glossary_block}\n\n"
-            f"原文：\n{chapter.content}"
-        )
-        if self.llm is None:
-            self.llm = LLM()
-        raw = self.llm.chat(
-            [
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.2,
-            response_format={"type": "json_object"},
-        ).strip()
-        return _parse_summary_json(raw)
+        path.write_text(self._render_markdown(chapter, body), encoding="utf-8")
+        return Result(chapter=chapter, summary=body, output_path=path)
 
     def _split_chapters(
         self,
@@ -491,17 +414,18 @@ class Wiki:
 
         for junk in root.select(
             "script, style, nav, footer, .toc, .navbox, .mw-editsection, "
-            "ol.references, .references"
+            "ol.references, .references, "
+            ".wikia-gallery, .lightbox-caption, div.thumb, figure.thumb, ul.gallery"
         ):
             junk.decompose()
 
-        entry = page_title or self._extract_page_title(soup) or "未命名条目"
+        entry = page_title or self._extract_page_title(soup) or "untitled"
         chapters = self._split_by_heading_traversal(
             root, entry, source_url, catalog
         )
 
         if not chapters:
-            full = self._normalize_text(root.get_text("\n", strip=True))
+            full = self._normalize_text(_element_text(root))
             if full:
                 chapters = [
                     Chapter(
@@ -551,7 +475,7 @@ class Wiki:
         if len(preface) >= self.min_chapter_chars:
             chapters.append(
                 Chapter(
-                    title="前言",
+                    title="Introduction",
                     content=preface,
                     entry=page_title,
                     level=1,
@@ -563,7 +487,12 @@ class Wiki:
             order += 1
 
         for heading in headings:
-            title = heading.get_text(" ", strip=True) or f"未命名标题{order}"
+            title = heading.get_text(" ", strip=True) or f"untitled{order}"
+            if title.strip().casefold() == "other languages":
+                Dictionary.add_from_wiki_pairs(
+                    _pairs_from_other_languages(heading, self.heading_tags)
+                )
+                continue
             level = (
                 int(heading.name[1])
                 if heading.name and heading.name.startswith("h")
@@ -590,9 +519,10 @@ class Wiki:
     def _collect_preface(self, first: Tag) -> str:
         parts: list[str] = []
         for sib in first.previous_siblings:
-            text = self._sibling_plain_text(sib)
-            if text:
-                parts.append(text)
+            if isinstance(sib, Tag):
+                text = _element_text(sib)
+                if text:
+                    parts.append(text)
         return self._normalize_text("\n".join(reversed(parts)))
 
     def _collect_heading_content(self, heading: Tag, heading_set: set) -> str:
@@ -606,18 +536,10 @@ class Wiki:
                 nested = sib.find(self.heading_tags)
                 if nested and nested in heading_set:
                     break
-            text = self._sibling_plain_text(sib)
-            if text:
-                parts.append(text)
+                text = _element_text(sib)
+                if text:
+                    parts.append(text)
         return self._normalize_text("\n".join(parts))
-
-    @staticmethod
-    def _sibling_plain_text(sib: NavigableString | Tag) -> str:
-        if isinstance(sib, NavigableString):
-            return str(sib).strip()
-        if isinstance(sib, Tag):
-            return sib.get_text("\n", strip=True)
-        return ""
 
     @staticmethod
     def _citations_in_text(
@@ -637,30 +559,30 @@ class Wiki:
     @staticmethod
     def _normalize_text(text: str) -> str:
         text = text.replace("\xa0", " ")
-        text = re.sub(r"[ \t]+\n", "\n", text)
+        text = re.sub(r"[ \t]+", " ", text)
+        text = re.sub(r" *\n *", "\n", text)
         text = re.sub(r"\n{3,}", "\n\n", text)
-        text = re.sub(r"[ \t]{2,}", " ", text)
         return text.strip()
 
     @staticmethod
     def _render_markdown(chapter: Chapter, summary: str) -> str:
-        entry = chapter.entry or "未命名条目"
-        title = chapter.title or "未命名标题"
+        entry = chapter.entry or "untitled"
+        title = chapter.title or "untitled"
         heading = title if entry == title else f"{entry} · {title}"
         lines = [
             f"# {heading}",
             "",
-            f"- 条目: {entry}",
-            f"- 标题: {title}",
-            f"- 来源: {chapter.source_url or '未知'}",
+            f"- Entry: {entry}",
+            f"- Title: {title}",
+            f"- Source: {chapter.source_url or 'unknown'}",
             "",
-            "## 世界观精简",
+            "## Content",
             "",
             summary.strip(),
             "",
         ]
         if chapter.citations:
-            lines.extend(["## 出处", ""])
+            lines.extend(["## Citations", ""])
             seen: set[str] = set()
             for cite in chapter.citations:
                 if cite.note_id in seen:
@@ -672,3 +594,36 @@ class Wiki:
                     lines.append(f"- {cite.label}")
             lines.append("")
         return "\n".join(lines)
+
+
+def _pairs_from_other_languages(
+    heading: Tag, heading_tags: tuple[str, ...]
+) -> list[tuple[str, str]]:
+    """当前节 wikitable 里 English / Chinese (Simplified) 的官方名。"""
+    pairs: list[tuple[str, str]] = []
+    en = ""
+    for sib in heading.next_siblings:
+        if isinstance(sib, Tag) and (
+            sib.name in heading_tags or sib.find(heading_tags)
+        ):
+            break
+        if not isinstance(sib, Tag):
+            continue
+        tables = [sib] if sib.name == "table" else sib.find_all("table")
+        for table in tables:
+            for tr in table.find_all("tr"):
+                cells = tr.find_all(["th", "td"])
+                if len(cells) < 2:
+                    continue
+                lang = cells[0].get_text(" ", strip=True).casefold()
+                name = clean_text(
+                    cells[1].get_text("\n", strip=True).split("\n", 1)[0]
+                )
+                if not name:
+                    continue
+                if lang.startswith("english"):
+                    en = name
+                elif en and "simplified" in lang:
+                    pairs.append((en, name))
+                    en = ""
+    return pairs

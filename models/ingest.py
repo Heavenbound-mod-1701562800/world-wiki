@@ -130,8 +130,8 @@ class Ingest:
         meta: dict[str, str] = {}
         for line in text.splitlines():
             line = line.strip()
-            if line.startswith("- 条目:"):
+            if line.startswith("- 条目:") or line.startswith("- Entry:"):
                 meta["entry"] = line.split(":", 1)[1].strip()
-            elif line.startswith("- 标题:"):
+            elif line.startswith("- 标题:") or line.startswith("- Title:"):
                 meta["title"] = line.split(":", 1)[1].strip()
         return meta

@@ -244,14 +244,11 @@ export default function Admin() {
   const [raw, setRaw] = useState('')
   const [summarizing, setSummarizing] = useState(false)
   const [ingesting, setIngesting] = useState(false)
-  const [lookingUp, setLookingUp] = useState(false)
   const [error, setError] = useState('')
   const [summaryReport, setSummaryReport] = useState(null)
   const [ingestReport, setIngestReport] = useState(null)
   const [pages, setPages] = useState([])
   const [pagesError, setPagesError] = useState('')
-  const [untranslated, setUntranslated] = useState([])
-  const [filledTerms, setFilledTerms] = useState([])
 
   const previewUrls = useMemo(() => parseUrlBlocks(raw), [raw])
 
@@ -286,8 +283,6 @@ export default function Admin() {
     setError('')
     setIngestReport(null)
     setSummaryReport(null)
-    setUntranslated([])
-    setFilledTerms([])
     setSummarizing(true)
 
     try {
@@ -306,7 +301,6 @@ export default function Admin() {
         pages: data.pages || [],
         results: data.results || [],
       })
-      setUntranslated(data.untranslated || [])
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -338,33 +332,6 @@ export default function Admin() {
       setIngesting(false)
     }
   }
-
-  async function runWikiLookup() {
-    const pending = untranslated.filter((term) => !filledTerms.includes(term))
-    if (!pending.length || lookingUp) return
-    setLookingUp(true)
-    setError('')
-    try {
-      const res = await fetch('/dictionary/lookup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json; charset=utf-8' },
-        body: JSON.stringify({ terms: pending }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        throw new Error(data.error || `补译失败 (${res.status})`)
-      }
-      setFilledTerms((prev) => [...prev, ...(data.filled || [])])
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setLookingUp(false)
-    }
-  }
-
-  const pendingUntranslated = untranslated.filter(
-    (term) => !filledTerms.includes(term),
-  )
 
   return (
     <div className="app admin-app">
@@ -428,7 +395,7 @@ export default function Admin() {
                 <div className="composer-bar">
                   <span className="hint">
                     已识别 {previewUrls.length} 个网址
-                    {summarizing ? ' · 抓取与总结可能较久，请稍候' : ''}
+                    {summarizing ? ' · 抓取可能较久，请稍候' : ''}
                   </span>
                   <button
                     type="submit"
@@ -472,36 +439,6 @@ export default function Admin() {
                           </li>
                         ))}
                       </ul>
-                    </details>
-                  )}
-                  {untranslated.length > 0 && (
-                    <details className="admin-details">
-                      <summary>
-                        未在词典中匹配到的词（{untranslated.length}）
-                      </summary>
-                      <ul className="admin-untranslated">
-                        {untranslated.map((term) => (
-                          <li
-                            key={term}
-                            className={
-                              filledTerms.includes(term) ? 'is-filled' : undefined
-                            }
-                          >
-                            {term}
-                            {filledTerms.includes(term) ? ' · 已补' : ''}
-                          </li>
-                        ))}
-                      </ul>
-                      <button
-                        type="button"
-                        className="admin-ingest"
-                        onClick={runWikiLookup}
-                        disabled={
-                          lookingUp || summarizing || pendingUntranslated.length === 0
-                        }
-                      >
-                        {lookingUp ? '补译中…' : '用 Wiki 补译'}
-                      </button>
                     </details>
                   )}
                   <button

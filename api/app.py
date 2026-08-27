@@ -135,20 +135,11 @@ def summarize():
     except Exception as exc:  # pylint: disable=broad-exception-caught
         return _error(exc, status=500)
 
-    untranslated = sorted(
-        {
-            name
-            for item in results
-            for name in (item.untranslated or [])
-            if name
-        }
-    )
     return jsonify(
         {
             "page_count": len({item.chapter.source_url for item in results}),
             "document_count": len(results),
             "pages": sorted({item.chapter.source_url for item in results}),
-            "untranslated": untranslated,
             "results": [
                 {
                     "entry": item.chapter.entry,

@@ -35,15 +35,13 @@ def test_summarize_ok(client):
     fake = [
         Result(
             chapter=chapter,
-            summary="概述",
+            summary="The old world was destroyed.",
             output_path=Path("a.md"),
-            untranslated=["Alatus"],
         ),
         Result(
             chapter=chapter,
-            summary="其二",
+            summary="Then many gods fought.",
             output_path=Path("b.md"),
-            untranslated=["Alatus", "Naberius"],
         ),
     ]
     with patch("api.app.do_summarize", return_value=fake) as summarize:
@@ -57,7 +55,7 @@ def test_summarize_ok(client):
     assert body["document_count"] == 2
     assert body["pages"] == ["https://example.test/wiki/Mondstadt"]
     assert body["results"][0]["slug"] == chapter.slug
-    assert body["untranslated"] == ["Alatus", "Naberius"]
+    assert "untranslated" not in body
     summarize.assert_called_once()
 
 

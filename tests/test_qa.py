@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from libs.store import Chunk
+from models.dictionary import Dictionary
 from models.qa import AnswerStream, QA
 
 
@@ -42,6 +43,29 @@ def test_ask_uses_store_and_llm():
     assert result.answer == "岩神。"
     store.query.assert_called_once_with("岩神是谁", top_k=2)
     assert result.sources == [chunk]
+
+
+def test_ask_passes_english_source_and_glossary():
+    Dictionary.create(
+        en="Zhongli", zh="钟离", source=Dictionary.Source.GENSHIN_DICTIONARY
+    )
+    chunk = Chunk(
+        id="1",
+        document="Zhongli is the Geo Archon of Liyue.",
+        metadata={"label": "Zhongli"},
+    )
+    store = MagicMock()
+    store.count.return_value = 1
+    store.query.return_value = [chunk]
+    llm = MagicMock()
+    llm.chat.return_value = "钟离是岩神。"
+    qa = QA(store=store, llm=llm)
+    qa.ask("岩神是谁")
+    messages = llm.chat.call_args.args[0]
+    user = messages[1]["content"]
+    assert "Zhongli is the Geo Archon of Liyue." in user
+    assert "Zhongli → 钟离" in user
+    assert "专名对照：" in user
 
 
 def test_ask_stream_builds_answer_after_tokens():

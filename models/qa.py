@@ -8,14 +8,16 @@ from typing import Iterable, Iterator, Optional
 
 from libs.llm import LLM
 from libs.store import Chunk, Store
+from models.dictionary import Dictionary
 
 SYSTEM_PROMPT = """你是原神世界观解释助手。
 只能依据给定资料回答，不要编造资料中没有的设定。
+资料是英文原文；「专名对照」给出已有中文译名。回答用简洁中文，专名必须用对照表中的译名；对照表没有的专名保持英文，禁止自行音译。
 资料中带〔出处〕或 NPC Dialogue 的内容，只是该角色/文本的说法，回答时必须限定为「据 NPC … 所述」，不得说成确定的世界设定。
 无出处的条目可按资料中的设定陈述。
 若资料不足，明确说明「根据现有资料无法确定」，可简要指出缺什么信息。
 若能回答，不要说「根据某某文档」这样的句子，直接回答。
-回答使用简洁中文，必要时分点。"""
+必要时分点。"""
 
 
 @dataclass
@@ -92,17 +94,28 @@ class QA:
 
         sources = self.store.query(q, top_k=top_k or self.top_k)
         context = self._format_context(sources)
+        blob = "\n\n".join(chunk.document or "" for chunk in sources)
+        glossary = Dictionary.matches_in(blob)
+        if glossary:
+            glossary_block = "\n".join(f"{en} → {zh}" for en, zh in glossary)
+        else:
+            glossary_block = "（无）"
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {
                 "role": "user",
-                "content": f"问题：{q}\n\n资料：\n{context}\n\n请依据资料回答。",
+                "content": (
+                    f"问题：{q}\n\n"
+                    f"专名对照：\n{glossary_block}\n\n"
+                    f"资料：\n{context}\n\n"
+                    "请依据资料回答。"
+                ),
             },
         ]
         return q, sources, messages
 
     def ask(self, question: str, *, top_k: int | None = None) -> Answer:
-        """检索相关总结后生成回答（非流式）。"""
+        """检索相关资料后生成回答（非流式）。"""
         q, sources, messages = self._prepare(question, top_k=top_k)
         assert self.llm is not None
         answer = self.llm.chat(messages, temperature=0.2).strip()
