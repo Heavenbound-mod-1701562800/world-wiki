@@ -20,11 +20,23 @@ logger = logging.getLogger(__name__)
 WORDS_JSON_URL = "https://dataset.genshin-dictionary.com/words.json"
 _MIN_EN_LEN = 3
 _MAX_EN_LEN = 64
+_MIN_ZH_LEN = 2
+_MAX_ZH_LEN = 64
 _URL_RE = re.compile(r"https?://[^\s\]）>\"']+", re.IGNORECASE)
 _SLASH_ALT_RE = re.compile(r"\s+/\s+")
+_SOFT_SEP_RE = re.compile(r"[-–—−‐‑_]+")
+_ZH_ISOLATOR_RE = re.compile(r"[-–—−‐‑_·\s]+")
+_SPACE_RE = re.compile(r"\s+")
 _OL_PARAM_RE = re.compile(
     r"^(?:(\d+)_)?([A-Za-z0-9]+)\s*=\s*(.*)$",
     re.DOTALL,
+)
+# 句读/引号为硬边界；ASCII 撇号不算引号（Khaenri'ah）
+_BOUNDARIES = frozenset(
+    ".:,;。，、：；"
+    "\"“”„‟«»"
+    "「」『』｢｣"
+    "〝〞〟＂"
 )
 
 
@@ -291,9 +303,28 @@ class Dictionary(BaseModel):
 
     @classmethod
     def matches_in(cls, text: str) -> list[tuple[str, str]]:
-        """正文里出现过的专名（大小写不敏感）；不含 URL；跳过未译和 -1。"""
-        haystack = _URL_RE.sub(" ", text or "").casefold()
-        by_fold: dict[str, tuple[str, list[str]]] = {}
+        """正文里出现过的专名（en 或 zh）；不含 URL；跳过未译和 -1。
+
+        英文：大小写不敏感；空白/下划线/连字符收成单空格；句读与引号为硬边界。
+        中文：去掉空白/下划线/连字符/间隔号；句读与引号为硬边界。不做 Inazuman 这类词形。
+        """
+        raw = _URL_RE.sub(" ", text or "")
+        by_en, by_zh = cls._match_indexes()
+        hits: dict[str, tuple[str, str]] = {}
+        _scan_en(raw, by_en, hits)
+        _scan_zh(raw, by_zh, hits)
+        return sorted(hits.values(), key=lambda item: len(item[0]), reverse=True)
+
+    @classmethod
+    def _match_indexes(
+        cls,
+    ) -> tuple[
+        dict[str, tuple[str, list[str]]],
+        dict[str, list[tuple[str, list[str]]]],
+    ]:
+        """同一批行：规范化 en / zh 各做一份内存索引。"""
+        by_en: dict[str, tuple[str, list[str]]] = {}
+        by_zh: dict[str, list[tuple[str, list[str]]]] = {}
         for row in cls.select(cls.en, cls.zh, cls.source):
             if row.source == cls.Source.NOT_PROPER:
                 continue
@@ -301,25 +332,18 @@ class Dictionary(BaseModel):
             zh = clean_text(row.zh)
             if not zh or not _MIN_EN_LEN <= len(en) <= _MAX_EN_LEN:
                 continue
-            zhs = by_fold.setdefault(en.casefold(), (en, []))[1]
-            if zh not in zhs:
-                zhs.append(zh)
-
-        hits: dict[str, tuple[str, str]] = {}
-        hlen = len(haystack)
-        for i in range(hlen):
-            if i > 0 and haystack[i - 1].isascii() and haystack[i - 1].isalpha():
+            en_key = _en_key(en)
+            if not _MIN_EN_LEN <= len(en_key) <= _MAX_EN_LEN:
                 continue
-            max_n = min(_MAX_EN_LEN, hlen - i)
-            for n in range(max_n, _MIN_EN_LEN - 1, -1):
-                j = i + n
-                if j < hlen and haystack[j].isascii() and haystack[j].isalpha():
-                    continue
-                found = by_fold.get(haystack[i:j])
-                if found:
-                    hits[found[0].casefold()] = (found[0], " / ".join(found[1]))
-
-        return sorted(hits.values(), key=lambda item: len(item[0]), reverse=True)
+            record = by_en.setdefault(en_key, (en, []))
+            if zh not in record[1]:
+                record[1].append(zh)
+            zh_key = _zh_key(zh)
+            if _MIN_ZH_LEN <= len(zh_key) <= _MAX_ZH_LEN:
+                bucket = by_zh.setdefault(zh_key, [])
+                if record not in bucket:
+                    bucket.append(record)
+        return by_en, by_zh
 
     @classmethod
     def _fetch_rows(cls) -> list[tuple[str, str]]:
@@ -351,6 +375,73 @@ class Dictionary(BaseModel):
         if not rows:
             raise RuntimeError("词表为空：words.json 中没有同时含 en / zhCN 的条目")
         return rows
+
+
+def _en_key(text: str) -> str:
+    """英文匹配：大小写不敏感；下划线/连字符/空白收成单空格。撇号保留。"""
+    collapsed = _SOFT_SEP_RE.sub(" ", (text or "").casefold())
+    return _SPACE_RE.sub(" ", collapsed).strip()
+
+
+def _zh_key(text: str) -> str:
+    """中文匹配：去掉空白、下划线、连字符、间隔号。"""
+    return _ZH_ISOLATOR_RE.sub("", text or "")
+
+
+def _is_cjk(char: str) -> bool:
+    code = ord(char)
+    return (
+        0x3400 <= code <= 0x4DBF
+        or 0x4E00 <= code <= 0x9FFF
+        or 0xF900 <= code <= 0xFAFF
+    )
+
+
+def _scan_en(
+    text: str,
+    by_en: dict[str, tuple[str, list[str]]],
+    hits: dict[str, tuple[str, str]],
+) -> None:
+    haystack = _en_key(text)
+    hlen = len(haystack)
+    for i in range(hlen):
+        if haystack[i] in _BOUNDARIES:
+            continue
+        if i > 0 and haystack[i - 1].isascii() and haystack[i - 1].isalpha():
+            continue
+        max_n = min(_MAX_EN_LEN, hlen - i)
+        for n in range(max_n, _MIN_EN_LEN - 1, -1):
+            j = i + n
+            if j < hlen and haystack[j].isascii() and haystack[j].isalpha():
+                continue
+            window = haystack[i:j]
+            if any(ch in _BOUNDARIES for ch in window):
+                continue
+            found = by_en.get(window)
+            if found:
+                hits[found[0].casefold()] = (found[0], " / ".join(found[1]))
+
+
+def _scan_zh(
+    text: str,
+    by_zh: dict[str, list[tuple[str, list[str]]]],
+    hits: dict[str, tuple[str, str]],
+) -> None:
+    haystack = _zh_key(text)
+    hlen = len(haystack)
+    for i in range(hlen):
+        if haystack[i] in _BOUNDARIES or not _is_cjk(haystack[i]):
+            continue
+        max_n = min(_MAX_ZH_LEN, hlen - i)
+        for n in range(max_n, _MIN_ZH_LEN - 1, -1):
+            j = i + n
+            window = haystack[i:j]
+            if any(ch in _BOUNDARIES for ch in window):
+                continue
+            found = by_zh.get(window)
+            if found:
+                for en, zhs in found:
+                    hits[en.casefold()] = (en, " / ".join(zhs))
 
 
 def _expand_slash_pairs(en: str, zh: str) -> list[tuple[str, str]]:

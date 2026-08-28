@@ -1,6 +1,6 @@
 ---
 description: Chroma 入库与 RAG 问答
-globs: models/ingest.py,models/qa.py,libs/store.py
+globs: models/ingest.py,models/qa.py,models/dictionary.py,libs/store.py
 alwaysApply: false
 ---
 
@@ -10,4 +10,4 @@ alwaysApply: false
 
 `Ingest` 扫描 `data/summaries/*.md`，整篇 embedding；`content_hash` 未变则跳过。`--ingest --reset` 才清空重建。
 
-QA 把检索到的 `chunk.document`（英文 md）和 `Dictionary.matches_in` 命中的专名对照一起塞进 prompt。回答用中文，专名用对照表译名。带〔reference〕或 NPC 对话的内容必须限定语气，不得说成确定设定。来源标点按标签：`Book:` 用《》，武器/道具用「」，角色故事/地点/任务等不加书名号。不要在回答里写「根据某某文档」。
+QA 检索前用 `matches_in` 扫问题里的专名，把命中的英文用逗号附在查询后面（原问进 prompt，附录不进）。资料侧再 `matches_in` 英文 md 做「专名对照」。`matches_in` 一次读出词表在内存匹配（约万级）：同一行的 `en`/`zh` 都能打中；英文空白/下划线/连字符收成单空格，中文去掉隔离符（含间隔号）；句号、逗号、冒号、分号、引号为硬边界；不做 Inazuman 这类词形。回答用中文，专名用对照表译名。带〔reference〕或 NPC 对话的内容必须限定语气，不得说成确定设定。来源标点按标签：`Book:` 用《》，武器/道具用「」，角色故事/地点/任务等不加书名号。不要在回答里写「根据某某文档」。

@@ -79,6 +79,80 @@ def test_matches_in_skips_url_empty_zh_and_not_proper():
     assert Dictionary.to_zh("Vision") is None
 
 
+def test_matches_in_equates_dashes_and_spaces():
+    Dictionary.create(
+        en="Entombed City - Ancient Palace",
+        zh="雪葬之都·旧宫",
+        source=Dictionary.Source.GENSHIN_DICTIONARY,
+    )
+    Dictionary.create(
+        en="Khaenri'ah",
+        zh="坎瑞亚",
+        source=Dictionary.Source.GENSHIN_DICTIONARY,
+    )
+    hits = dict(
+        Dictionary.matches_in(
+            "near the Entombed City Ancient Palace and Entombed City – Ancient Palace."
+        )
+    )
+    assert hits["Entombed City - Ancient Palace"] == "雪葬之都·旧宫"
+    hits_hyphen = dict(
+        Dictionary.matches_in("the Entombed City-Ancient Palace ruins")
+    )
+    assert hits_hyphen["Entombed City - Ancient Palace"] == "雪葬之都·旧宫"
+    assert dict(Dictionary.matches_in("Khaenriah fell.")) == {}
+    assert dict(Dictionary.matches_in("Khaenri'ah fell."))["Khaenri'ah"] == "坎瑞亚"
+
+
+def test_matches_in_equates_dashed_text_to_spaced_entry():
+    Dictionary.create(
+        en="Entombed City Ancient Palace",
+        zh="雪葬之都·旧宫",
+        source=Dictionary.Source.GENSHIN_DICTIONARY,
+    )
+    hits = dict(Dictionary.matches_in("the Entombed City - Ancient Palace"))
+    assert hits["Entombed City Ancient Palace"] == "雪葬之都·旧宫"
+
+
+def test_matches_in_equates_underscore_not_period():
+    Dictionary.create(
+        en="Grand Narukami Shrine",
+        zh="鸣神大社",
+        source=Dictionary.Source.GENSHIN_DICTIONARY,
+    )
+    hits = dict(Dictionary.matches_in("at the Grand_Narukami_Shrine gate"))
+    assert hits["Grand Narukami Shrine"] == "鸣神大社"
+    assert dict(Dictionary.matches_in("Grand.Narukami Shrine")) == {}
+    assert dict(Dictionary.matches_in("Grand, Narukami Shrine")) == {}
+
+
+def test_matches_in_finds_zh_ignores_isolators_not_punct():
+    Dictionary.create(
+        en="Sacred Sakura",
+        zh="神樱树",
+        source=Dictionary.Source.GENSHIN_DICTIONARY,
+    )
+    Dictionary.create(
+        en="Zhongli",
+        zh="钟离",
+        source=Dictionary.Source.GENSHIN_DICTIONARY,
+    )
+    Dictionary.create(
+        en="Entombed City - Ancient Palace",
+        zh="雪葬之都·旧宫",
+        source=Dictionary.Source.GENSHIN_DICTIONARY,
+    )
+    assert dict(Dictionary.matches_in("门口的神 樱 树很大"))["Sacred Sakura"] == "神樱树"
+    assert dict(Dictionary.matches_in("神-樱树"))["Sacred Sakura"] == "神樱树"
+    assert dict(Dictionary.matches_in("雪葬之都旧宫"))[
+        "Entombed City - Ancient Palace"
+    ] == "雪葬之都·旧宫"
+    assert dict(Dictionary.matches_in("「钟离」是谁"))["Zhongli"] == "钟离"
+    assert dict(Dictionary.matches_in("神樱。树")) == {}
+    assert dict(Dictionary.matches_in("「神樱」树")) == {}
+    assert dict(Dictionary.matches_in("岩")) == {}
+
+
 def test_sync_replaces_genshin_keeps_unmatched_upgrades_not_proper():
     Dictionary.create(en="Old", zh="旧", source=Dictionary.Source.GENSHIN_DICTIONARY)
     Dictionary.create(en="KeepMe", zh="", source=Dictionary.Source.MANUAL)
