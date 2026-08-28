@@ -94,7 +94,9 @@ class QA:
         if self.store.count() == 0:
             raise RuntimeError("向量库为空。请先运行 --ingest。")
 
-        sources = self.store.query(q, top_k=top_k or self.top_k)
+        sources = self.store.query(
+            self._retrieval_query(q), top_k=top_k or self.top_k
+        )
         context = self._format_context(sources)
         blob = "\n\n".join(chunk.document or "" for chunk in sources)
         glossary = Dictionary.matches_in(blob)
@@ -115,6 +117,22 @@ class QA:
             },
         ]
         return q, sources, messages
+
+    @staticmethod
+    def _retrieval_query(question: str) -> str:
+        """原问后面用逗号附上命中的英文专名；已在原文出现的不重复。"""
+        extra: list[str] = []
+        seen: set[str] = set()
+        fold = question.casefold()
+        for en, _zh in Dictionary.matches_in(question):
+            key = en.casefold()
+            if key in seen or key in fold:
+                continue
+            seen.add(key)
+            extra.append(en)
+        if not extra:
+            return question
+        return question + "; " + ", ".join(extra)
 
     def ask(self, question: str, *, top_k: int | None = None) -> Answer:
         """检索相关资料后生成回答（非流式）。"""
