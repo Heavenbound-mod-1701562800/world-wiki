@@ -64,7 +64,7 @@ def test_ask_appends_english_names_to_retrieval_query():
     qa = QA(store=store, llm=llm)
     result = qa.ask("鸣神大社门口的钟离")
     store.query.assert_called_once_with(
-        "鸣神大社门口的钟离, Grand Narukami Shrine, Zhongli",
+        "鸣神大社门口的钟离; Grand Narukami Shrine, Zhongli",
         top_k=5,
     )
     assert result.question == "鸣神大社门口的钟离"
