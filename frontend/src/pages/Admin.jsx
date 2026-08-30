@@ -49,6 +49,12 @@ function DictionaryPanel() {
   const [error, setError] = useState('')
   const [editing, setEditing] = useState(null)
   const [saving, setSaving] = useState(false)
+  const [reload, setReload] = useState(0)
+  const [adding, setAdding] = useState(false)
+  const [drafts, setDrafts] = useState([])
+  const [nextPairId, setNextPairId] = useState(1)
+  const [addError, setAddError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
 
   const query = q.trim()
 
@@ -85,7 +91,7 @@ function DictionaryPanel() {
     return () => {
       cancelled = true
     }
-  }, [query, offset])
+  }, [query, offset, reload])
 
   async function saveEdit(e) {
     e.preventDefault()
@@ -121,12 +127,82 @@ function DictionaryPanel() {
     }
   }
 
+  function openAdd() {
+    setEditing(null)
+    setDrafts([])
+    setAddError('')
+    setAdding(true)
+  }
+
+  function closeAdd() {
+    if (submitting) return
+    setAdding(false)
+    setAddError('')
+  }
+
+  function addPairRow() {
+    setDrafts((prev) => [...prev, { id: nextPairId, en: '', zh: '' }])
+    setNextPairId((n) => n + 1)
+  }
+
+  function updatePair(id, field, value) {
+    setDrafts((prev) =>
+      prev.map((row) => (row.id === id ? { ...row, [field]: value } : row)),
+    )
+  }
+
+  function removePair(id) {
+    setDrafts((prev) => prev.filter((row) => row.id !== id))
+  }
+
+  async function submitAdd(e) {
+    e.preventDefault()
+    if (submitting) return
+    if (!drafts.length) {
+      setAddError('请至少添加一对')
+      return
+    }
+    const pairs = drafts.map((row) => ({
+      en: row.en.trim(),
+      zh: row.zh.trim(),
+    }))
+    if (pairs.some((row) => !row.en || !row.zh)) {
+      setAddError('请填写所有中英文对')
+      return
+    }
+    setSubmitting(true)
+    try {
+      const res = await fetch('/dictionary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        body: JSON.stringify({ pairs }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data.error || `添加失败 (${res.status})`)
+      }
+      setAdding(false)
+      setAddError('')
+      setError('')
+      setReload((n) => n + 1)
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   const page = Math.floor(offset / PAGE_SIZE) + 1
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   return (
     <>
-      <h1>词典</h1>
+      <div className="admin-dict-head">
+        <h1>词典</h1>
+        <button type="button" onClick={openAdd}>
+          添加
+        </button>
+      </div>
       <p className="admin-lead">
         输入至少两个字符后搜索英文或中文。点一行可改中文和来源。
       </p>
@@ -234,6 +310,58 @@ function DictionaryPanel() {
             </button>
           </div>
         </form>
+      )}
+      {adding && (
+        <div className="admin-modal-backdrop" role="presentation">
+          <form
+            className="admin-modal"
+            onSubmit={submitAdd}
+            aria-labelledby="admin-add-title"
+          >
+            <h2 id="admin-add-title">添加词条</h2>
+            {drafts.length === 0 ? (
+              <p className="hint">还没有词条。点 + 添加一对中英文。</p>
+            ) : (
+              <div className="admin-pair-list">
+                {drafts.map((row) => (
+                  <div key={row.id} className="admin-pair-row">
+                    <input
+                      value={row.en}
+                      onChange={(e) => updatePair(row.id, 'en', e.target.value)}
+                      placeholder="英文"
+                      autoComplete="off"
+                    />
+                    <input
+                      value={row.zh}
+                      onChange={(e) => updatePair(row.id, 'zh', e.target.value)}
+                      placeholder="中文"
+                      autoComplete="off"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removePair(row.id)}
+                      aria-label="删除这一对"
+                    >
+                      删除
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button type="button" className="admin-pair-add" onClick={addPairRow}>
+              +
+            </button>
+            {addError && <p className="admin-error">{addError}</p>}
+            <div className="composer-bar">
+              <button type="button" onClick={closeAdd} disabled={submitting}>
+                取消
+              </button>
+              <button type="submit" disabled={submitting}>
+                {submitting ? '提交中…' : '提交'}
+              </button>
+            </div>
+          </form>
+        </div>
       )}
     </>
   )

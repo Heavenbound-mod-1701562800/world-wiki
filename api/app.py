@@ -107,6 +107,28 @@ def dictionary_update():
     return jsonify({"ok": True})
 
 
+@app.post("/dictionary")
+def dictionary_add():
+    """批量写入 en/zh；source 缺省 3。全部校验通过才写入。"""
+    body = _json_body()
+    pairs = body.get("pairs")
+    if not isinstance(pairs, list) or not pairs:
+        return _error(ValueError("请至少添加一对"))
+    normalized: list[tuple[str, str]] = []
+    for i, item in enumerate(pairs, start=1):
+        if not isinstance(item, dict):
+            return _error(ValueError(f"第 {i} 对无效"))
+        normalized.append((item.get("en") or "", item.get("zh") or ""))
+    kwargs: dict[str, Any] = {}
+    if "source" in body:
+        kwargs["source"] = body["source"]
+    try:
+        added, skipped = Dictionary.add(normalized, **kwargs)
+    except ValueError as exc:
+        return _error(exc)
+    return jsonify({"ok": True, "added": added, "skipped": skipped})
+
+
 @app.post("/dictionary/lookup")
 def dictionary_lookup():
     """对 terms 逐条 fill_from_wiki。"""

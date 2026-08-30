@@ -556,7 +556,9 @@ textarea {
 }
 
 .admin-pager button,
-.admin-edit button {
+.admin-edit button,
+.admin-dict-head button,
+.admin-modal button {
   border: 1px solid var(--line);
   background: #fffdf8;
   color: var(--ink);
@@ -566,9 +568,83 @@ textarea {
 }
 
 .admin-pager button:disabled,
-.admin-edit button:disabled {
+.admin-edit button:disabled,
+.admin-dict-head button:disabled,
+.admin-modal button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.admin-dict-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-dict-head h1 {
+  margin: 0;
+}
+
+.admin-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(21, 32, 51, 0.35);
+}
+
+.admin-modal {
+  width: min(560px, 100%);
+  max-height: min(80vh, 640px);
+  overflow: auto;
+  background: var(--assistant-bg);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  padding: 18px 18px 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.admin-modal h2 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 1.15rem;
+}
+
+.admin-pair-list {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-pair-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.admin-pair-row input,
+.admin-modal .admin-pair-add {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #fffdf8;
+  color: var(--ink);
+}
+
+.admin-pair-add {
+  justify-self: start;
+  min-width: 40px;
+  cursor: pointer;
+}
+
+.admin-modal .composer-bar {
+  justify-content: flex-end;
 }
 
 .admin-edit {
