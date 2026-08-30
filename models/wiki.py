@@ -489,8 +489,10 @@ class Wiki:
         for heading in headings:
             title = heading.get_text(" ", strip=True) or f"untitled{order}"
             if title.strip().casefold() == "other languages":
-                Dictionary.add_from_wiki_pairs(
-                    _pairs_from_other_languages(heading, self.heading_tags)
+                Dictionary.add(
+                    _pairs_from_other_languages(heading, self.heading_tags),
+                    source=Dictionary.Source.WIKI,
+                    strict=False,
                 )
                 continue
             level = (

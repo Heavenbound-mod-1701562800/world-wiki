@@ -167,6 +167,29 @@ def test_dictionary_patch_ok_and_404(client):
     assert res.status_code == 404
 
 
+def test_dictionary_post_ok(client):
+    with patch("api.app.Dictionary.add", return_value=(1, ["Zhongli"])) as added:
+        res = client.post(
+            "/dictionary",
+            json={"pairs": [{"en": "Xiao", "zh": "魈"}], "source": 2},
+        )
+    assert res.status_code == 200
+    assert res.get_json() == {"ok": True, "added": 1, "skipped": ["Zhongli"]}
+    added.assert_called_once_with([("Xiao", "魈")], source=2)
+
+
+def test_dictionary_post_rejects_empty_and_invalid(client):
+    res = client.post("/dictionary", json={"pairs": []})
+    assert res.status_code == 400
+    with patch("api.app.Dictionary.add", side_effect=ValueError("第 1 对无效")):
+        res = client.post(
+            "/dictionary",
+            json={"pairs": [{"en": "ab", "zh": "短"}]},
+        )
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "第 1 对无效"
+
+
 def test_dictionary_lookup_ok(client):
     with patch(
         "api.app.Dictionary.lookup_many",

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from libs.crawler import CrawlerError, FandomWikiCrawler
 from libs.utils import clean_text
 from models.dictionary import Dictionary, _expand_slash_pairs, _zh_from_other_languages
@@ -45,20 +47,53 @@ def test_clean_text_strips_quotes_punct_and_space():
     assert clean_text(None) == ""
 
 
-def test_add_local_cleans_and_skips_short():
-    assert Dictionary.add_local('  "Raiden"  ') is True
-    row = Dictionary.get(Dictionary.en == "Raiden")
-    assert row.zh == ""
+def test_add_writes_manual_by_default():
+    added, skipped = Dictionary.add([("  Xiao  ", " 魈 ")])
+    assert added == 1
+    assert skipped == []
+    row = Dictionary.get(Dictionary.en == "Xiao")
+    assert row.zh == "魈"
     assert row.source == Dictionary.Source.MANUAL
-    assert Dictionary.add_local("ab") is False
-    assert Dictionary.add_local("raiden") is False
 
 
-def test_add_local_skips_not_proper():
-    Dictionary.create(en="Vision", zh="", source=Dictionary.Source.NOT_PROPER)
-    assert Dictionary.add_local("Vision") is False
-    row = Dictionary.get(Dictionary.en == "Vision")
-    assert row.source == Dictionary.Source.NOT_PROPER
+def test_add_source_wiki_and_fills_empty_zh():
+    Dictionary.create(en="Ghost", zh="", source=Dictionary.Source.MANUAL)
+    added, skipped = Dictionary.add([("Ghost", "鬼")], source=2)
+    assert added == 1
+    assert skipped == []
+    row = Dictionary.get(Dictionary.en == "Ghost")
+    assert row.zh == "鬼"
+    assert row.source == Dictionary.Source.WIKI
+
+
+def test_add_skips_higher_source():
+    Dictionary.create(
+        en="Zhongli", zh="钟离", source=Dictionary.Source.GENSHIN_DICTIONARY
+    )
+    added, skipped = Dictionary.add([("Zhongli", "岩王帝君")])
+    assert added == 0
+    assert skipped == ["Zhongli"]
+    row = Dictionary.get(Dictionary.en == "Zhongli")
+    assert row.zh == "钟离"
+    assert row.source == Dictionary.Source.GENSHIN_DICTIONARY
+
+
+def test_add_rejects_invalid_batch_without_writing():
+    with pytest.raises(ValueError, match="第 2 对无效"):
+        Dictionary.add([("Xiao", "魈"), ("x", "短")])
+    assert Dictionary.select().count() == 0
+    with pytest.raises(ValueError, match="中英文须都填写"):
+        Dictionary.add([("Xiao", "")])
+    with pytest.raises(ValueError, match="source 无效"):
+        Dictionary.add([("Xiao", "魈")], source=9)
+
+
+def test_add_expands_slash_aliases():
+    added, skipped = Dictionary.add([("comrade / partner", "伙伴 / 搭档")])
+    assert added == 4
+    assert skipped == []
+    ens = {row.en for row in Dictionary.select()}
+    assert ens == {"comrade", "partner"}
 
 
 def test_matches_in_skips_url_empty_zh_and_not_proper():
@@ -151,6 +186,29 @@ def test_matches_in_finds_zh_ignores_isolators_not_punct():
     assert dict(Dictionary.matches_in("神樱。树")) == {}
     assert dict(Dictionary.matches_in("「神樱」树")) == {}
     assert dict(Dictionary.matches_in("岩")) == {}
+
+
+def test_matches_in_zh_uses_jieba_tokens_not_substrings():
+    Dictionary.create(en="Ei", zh="影", source=Dictionary.Source.GENSHIN_DICTIONARY)
+    assert dict(Dictionary.matches_in("一个影子")) == {}
+    assert dict(Dictionary.matches_in("影是谁"))["Ei"] == "影"
+
+
+def test_matches_in_zh_keeps_isolator_and_katakana_dot():
+    Dictionary.create(
+        en="Entombed City - Ancient Palace",
+        zh="雪葬之都·旧宫",
+        source=Dictionary.Source.GENSHIN_DICTIONARY,
+    )
+    assert dict(Dictionary.matches_in("雪葬之都·旧宫"))[
+        "Entombed City - Ancient Palace"
+    ] == "雪葬之都·旧宫"
+    assert dict(Dictionary.matches_in("雪葬之都旧宫"))[
+        "Entombed City - Ancient Palace"
+    ] == "雪葬之都·旧宫"
+    assert dict(Dictionary.matches_in("雪葬之都・旧宫"))[
+        "Entombed City - Ancient Palace"
+    ] == "雪葬之都·旧宫"
 
 
 def test_sync_replaces_genshin_keeps_unmatched_upgrades_not_proper():
@@ -368,19 +426,24 @@ def test_fill_from_wiki_skips_genshin_dictionary():
     assert row.zh == "钟离"
 
 
-def test_add_from_wiki_pairs_expands_slash_and_skips_source1():
+def test_add_strict_false_skips_invalid_and_higher_source():
     Dictionary.create(
         en="Zhongli", zh="钟离", source=Dictionary.Source.GENSHIN_DICTIONARY
     )
     Dictionary.create(en="Ghost", zh="", source=Dictionary.Source.MANUAL)
-    n = Dictionary.add_from_wiki_pairs(
+    added, skipped = Dictionary.add(
         [
             ("Zhongli", "岩王帝君"),
             ("comrade / partner", "伙伴 / 搭档"),
             ("Ghost", "鬼"),
-        ]
+            ("", "空"),
+            ("x", "短"),
+        ],
+        source=2,
+        strict=False,
     )
-    assert n == 5
+    assert added == 5
+    assert skipped == ["Zhongli"]
     assert Dictionary.get(Dictionary.en == "Zhongli").zh == "钟离"
     assert Dictionary.get(Dictionary.en == "Zhongli").source == (
         Dictionary.Source.GENSHIN_DICTIONARY
@@ -392,6 +455,7 @@ def test_add_from_wiki_pairs_expands_slash_and_skips_source1():
     assert ("comrade", "伙伴") in pairs
     assert ("partner", "搭档") in pairs
     assert ("Ghost", "鬼") in pairs
+    assert Dictionary.select().where(Dictionary.en == "x").count() == 0
 
 
 def test_fill_from_wiki_creates_missing_row():
