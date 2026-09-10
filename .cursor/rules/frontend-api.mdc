@@ -10,6 +10,6 @@ Flask 路由必须写在 SPA catch-all `GET /<path:path>` **之前**。新 API �
 
 Windows 下 `.js` 必须 `mimetypes.add_type("text/javascript", ".js")`，否则生产白屏（模块脚本被标成 text/plain）。
 
-前端 `fetch` 用相对路径（`/ask` `/summarize` `/pages` `/dictionary`）。Admin 三个 tab：抓取、页面库、词典。不要轮询 `/pages`，不要在点抓取时自动切 tab；页面库靠打开 tab 拉一次或用户刷新。词典 tab 搜索词 ≥2 才请求，每页 50。抓取完成后可入库；词典补译走词典 tab / `POST /dictionary/lookup`，不要再从 summarize 结果里收集 `untranslated`。
+前端 `fetch` 用相对路径（`/ask` `/summarize` `/pages` `/dictionary`）。Admin 三个 tab：抓取、页面库、词典。不要轮询 `/pages`，不要在点抓取时自动切 tab；页面库靠打开 tab 拉一次或用户刷新。词典 tab 搜索词 ≥2 才请求，每页 50；「添加」弹窗一次提交多对 en/zh，须全部填全，走 `POST /dictionary`（`source` 可选，缺省 3）。抓取完成后可入库；词典补译走词典 tab / `POST /dictionary/lookup`，不要再从 summarize 结果里收集 `untranslated`。
 
 `LLM_MAX_WORKERS` 只管问答等聊天调用。抓取不再入模。限流调 `.env.local`。

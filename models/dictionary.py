@@ -13,19 +13,20 @@ from peewee import SmallIntegerField, TextField
 import config
 from libs.crawler import CrawlerError, FandomWikiCrawler
 from libs.db import BaseModel, database
+from libs.tokenizer import Tokenizer
 from libs.utils import clean_text
 
 logger = logging.getLogger(__name__)
 
 WORDS_JSON_URL = "https://dataset.genshin-dictionary.com/words.json"
-_MIN_EN_LEN = 3
+_MIN_EN_LEN = 2
 _MAX_EN_LEN = 64
-_MIN_ZH_LEN = 2
+_MIN_ZH_LEN = 1
 _MAX_ZH_LEN = 64
 _URL_RE = re.compile(r"https?://[^\s\]）>\"']+", re.IGNORECASE)
 _SLASH_ALT_RE = re.compile(r"\s+/\s+")
 _SOFT_SEP_RE = re.compile(r"[-–—−‐‑_]+")
-_ZH_ISOLATOR_RE = re.compile(r"[-–—−‐‑_·\s]+")
+_ZH_ISOLATOR_RE = re.compile(r"[-–—−‐‑_·・\s]+")
 _SPACE_RE = re.compile(r"\s+")
 _OL_PARAM_RE = re.compile(
     r"^(?:(\d+)_)?([A-Za-z0-9]+)\s*=\s*(.*)$",
@@ -97,17 +98,77 @@ class Dictionary(BaseModel):
         return len(rows)
 
     @classmethod
-    def add_local(cls, en: str) -> bool:
-        """清洗后写入 source=3、zh 空；已有相同 en 则跳过（含 -1，二者同级）。"""
-        key = clean_text(en)
-        if not _MIN_EN_LEN <= len(key) <= _MAX_EN_LEN:
-            return False
-        fold = key.casefold()
-        for row in cls.select(cls.en):
-            if clean_text(row.en).casefold() == fold:
-                return False
-        cls.create(en=key, zh="", source=cls.Source.MANUAL)
-        return True
+    def add(
+        cls,
+        pairs: Iterable[tuple[str, str]],
+        *,
+        source: int = Source.MANUAL,
+        strict: bool = True,
+    ) -> tuple[int, list[str]]:
+        """清洗后写成指定 source（默认 3）。
+
+        strict=True：任一对无效则整批不写。strict=False：无效对丢掉，其余照写。
+        已有同行则按覆盖规则：能覆盖才写（空 zh 可补译），否则跳过。
+        en/zh 里用空格+/+空格分隔的别名展开为笛卡尔积。
+        """
+        parsed = cls._coerce_source(source)
+        prepared: list[tuple[str, str]] = []
+        for i, item in enumerate(pairs, start=1):
+            try:
+                prepared.extend(cls._expand_valid_pair(item, index=i))
+            except ValueError:
+                if strict:
+                    raise
+        added = 0
+        skipped: list[str] = []
+        with database.atomic():
+            for en, zh in prepared:
+                if cls._add(en, zh, parsed):
+                    added += 1
+                else:
+                    skipped.append(en)
+        return added, skipped
+
+    @staticmethod
+    def _expand_valid_pair(item: Any, *, index: int) -> list[tuple[str, str]]:
+        """清洗并展开一对；无效则 ValueError。"""
+        if not isinstance(item, (tuple, list)) or len(item) != 2:
+            raise ValueError(f"第 {index} 对无效")
+        en = clean_text(item[0])
+        zh = clean_text(item[1])
+        if not en or not zh:
+            raise ValueError(f"第 {index} 对无效：中英文须都填写")
+        expanded = _expand_slash_pairs(en, zh)
+        if not expanded:
+            raise ValueError(f"第 {index} 对无效：中英文须都填写")
+        prepared: list[tuple[str, str]] = []
+        for item_en, item_zh in expanded:
+            if not _MIN_EN_LEN <= len(item_en) <= _MAX_EN_LEN:
+                raise ValueError(
+                    f"第 {index} 对无效：英文长度须为 {_MIN_EN_LEN}–{_MAX_EN_LEN}"
+                )
+            if not item_zh or len(item_zh) > _MAX_ZH_LEN:
+                raise ValueError(
+                    f"第 {index} 对无效：中文长度须为 1–{_MAX_ZH_LEN}"
+                )
+            prepared.append((item_en, item_zh))
+        return prepared
+
+    @classmethod
+    def _coerce_source(cls, source: Any) -> int:
+        """source 须为 -1 / 1 / 2 / 3。"""
+        try:
+            parsed = int(source)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("source 无效") from exc
+        if parsed not in {
+            cls.Source.NOT_PROPER,
+            cls.Source.GENSHIN_DICTIONARY,
+            cls.Source.WIKI,
+            cls.Source.MANUAL,
+        }:
+            raise ValueError("source 无效")
+        return parsed
 
     @classmethod
     def search(
@@ -145,18 +206,7 @@ class Dictionary(BaseModel):
         if zh is not None:
             updates["zh"] = clean_text(zh)
         if source is not None:
-            try:
-                parsed = int(source)
-            except (TypeError, ValueError) as exc:
-                raise ValueError("source 无效") from exc
-            if parsed not in {
-                cls.Source.NOT_PROPER,
-                cls.Source.GENSHIN_DICTIONARY,
-                cls.Source.WIKI,
-                cls.Source.MANUAL,
-            }:
-                raise ValueError("source 无效")
-            updates["source"] = parsed
+            updates["source"] = cls._coerce_source(source)
         for row in cls.select():
             if clean_text(row.en).casefold() != fold:
                 continue
@@ -228,22 +278,8 @@ class Dictionary(BaseModel):
         return True
 
     @classmethod
-    def add_from_wiki_pairs(cls, pairs: Iterable[tuple[str, str]]) -> int:
-        """把 Other Languages 的 en/zhs 写成 source=2（覆盖 3/-1，不降级 1）。"""
-        written = 0
-        for raw_en, raw_zh in pairs:
-            en = clean_text(raw_en)
-            zh = clean_text(raw_zh)
-            if not en or not zh:
-                continue
-            for item_en, item_zh in _expand_slash_pairs(en, zh):
-                if cls._add_wiki_pair(item_en, item_zh):
-                    written += 1
-        return written
-
-    @classmethod
-    def _add_wiki_pair(cls, en: str, zh: str) -> bool:
-        """同 en+zh 或空 zh 则写成 2；已有更高级（如 1）则跳过，否则新插一行。"""
+    def _add(cls, en: str, zh: str, source: int) -> bool:
+        """同 en+zh 或空 zh 则写成 source；已有更高级则跳过，否则新插一行。"""
         fold = en.casefold()
         same = [
             row
@@ -252,28 +288,24 @@ class Dictionary(BaseModel):
         ]
         for row in same:
             if clean_text(row.zh) == zh:
-                if not cls._can_overwrite(cls.Source.WIKI, row.source):
+                if not cls._can_overwrite(source, row.source):
                     return False
-                cls.update(en=en, zh=zh, source=cls.Source.WIKI).where(
+                cls.update(en=en, zh=zh, source=source).where(
                     cls.en == row.en,
                     cls.source == row.source,
                     cls.zh == row.zh,
                 ).execute()
                 return True
         for row in same:
-            if not clean_text(row.zh) and cls._can_overwrite(
-                cls.Source.WIKI, row.source
-            ):
-                cls.update(zh=zh, source=cls.Source.WIKI).where(
+            if not clean_text(row.zh) and cls._can_overwrite(source, row.source):
+                cls.update(zh=zh, source=source).where(
                     cls.en == row.en,
                     cls.source == row.source,
                 ).execute()
                 return True
-        if any(
-            not cls._can_overwrite(cls.Source.WIKI, row.source) for row in same
-        ):
+        if any(not cls._can_overwrite(source, row.source) for row in same):
             return False
-        cls.create(en=en, zh=zh, source=cls.Source.WIKI)
+        cls.create(en=en, zh=zh, source=source)
         return True
 
     @classmethod
@@ -303,11 +335,7 @@ class Dictionary(BaseModel):
 
     @classmethod
     def matches_in(cls, text: str) -> list[tuple[str, str]]:
-        """正文里出现过的专名（en 或 zh）；不含 URL；跳过未译和 -1。
-
-        英文：大小写不敏感；空白/下划线/连字符收成单空格；句读与引号为硬边界。
-        中文：去掉空白/下划线/连字符/间隔号；句读与引号为硬边界。不做 Inazuman 这类词形。
-        """
+        """正文里出现过的专名（en 或 zh）；不含 URL；跳过未译和 -1。"""
         raw = _URL_RE.sub(" ", text or "")
         by_en, by_zh = cls._match_indexes()
         hits: dict[str, tuple[str, str]] = {}
@@ -388,15 +416,6 @@ def _zh_key(text: str) -> str:
     return _ZH_ISOLATOR_RE.sub("", text or "")
 
 
-def _is_cjk(char: str) -> bool:
-    code = ord(char)
-    return (
-        0x3400 <= code <= 0x4DBF
-        or 0x4E00 <= code <= 0x9FFF
-        or 0xF900 <= code <= 0xFAFF
-    )
-
-
 def _scan_en(
     text: str,
     by_en: dict[str, tuple[str, list[str]]],
@@ -428,20 +447,15 @@ def _scan_zh(
     hits: dict[str, tuple[str, str]],
 ) -> None:
     haystack = _zh_key(text)
-    hlen = len(haystack)
-    for i in range(hlen):
-        if haystack[i] in _BOUNDARIES or not _is_cjk(haystack[i]):
+    if not haystack:
+        return
+    for token in get_tokenizer().cut(haystack):
+        if not token or any(ch in _BOUNDARIES for ch in token):
             continue
-        max_n = min(_MAX_ZH_LEN, hlen - i)
-        for n in range(max_n, _MIN_ZH_LEN - 1, -1):
-            j = i + n
-            window = haystack[i:j]
-            if any(ch in _BOUNDARIES for ch in window):
-                continue
-            found = by_zh.get(window)
-            if found:
-                for en, zhs in found:
-                    hits[en.casefold()] = (en, " / ".join(zhs))
+        found = by_zh.get(token)
+        if found:
+            for en, zhs in found:
+                hits[en.casefold()] = (en, " / ".join(zhs))
 
 
 def _expand_slash_pairs(en: str, zh: str) -> list[tuple[str, str]]:
@@ -453,6 +467,21 @@ def _expand_slash_pairs(en: str, zh: str) -> list[tuple[str, str]]:
     if not ens or not zhs:
         return []
     return [(e, z) for e in ens for z in zhs]
+
+
+def zh_terms() -> set[str]:
+    """当前表里两字及以上的中文专名（原样 + 去隔离符）。"""
+    words: set[str] = set()
+    for row in Dictionary.select(Dictionary.zh, Dictionary.source):
+        if row.source == Dictionary.Source.NOT_PROPER:
+            continue
+        for part in _SLASH_ALT_RE.split(row.zh or ""):
+            part = clean_text(part)
+            keyed = _zh_key(part)
+            if len(keyed) < 2:
+                continue
+            words.update((part, keyed))
+    return words
 
 
 def _extract_template(wikitext: str, name: str) -> Optional[str]:
@@ -537,3 +566,15 @@ def _zh_from_other_languages(wikitext: str, en: str) -> Optional[str]:
         if zh:
             return zh
     return None
+
+
+tokenizer: Tokenizer | None = None  # pylint: disable=invalid-name
+
+
+def get_tokenizer() -> Tokenizer:
+    """对外唯一入口。单例；灌入当前词表的两字及以上中文专名。"""
+    global tokenizer  # pylint: disable=global-statement
+    if tokenizer is None:
+        tokenizer = Tokenizer()
+    tokenizer.ensure(zh_terms())
+    return tokenizer
