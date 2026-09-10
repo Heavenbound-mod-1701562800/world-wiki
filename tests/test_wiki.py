@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from bs4 import BeautifulSoup
 
@@ -151,7 +152,78 @@ def test_split_keeps_inline_links_without_extra_breaks():
     assert "Mondstadt's :" not in text
     assert "similar to\nMondstadt's" not in text
     assert "mon (紋) or seal" in text
-    assert "Mon" in text
+    assert "### Mon" in text
+
+
+def test_nested_headings_and_dt_become_markdown():
+    html = """
+    <html><body>
+      <h1>Chapter II</h1>
+      <article id="mw-content-text">
+        <h2>Summary</h2>
+        <h3><span class="mw-headline">Prologue - Autumn Winds, Scarlet Leaves</span></h3>
+        <i><div class="hatnote">Main article: Autumn Winds, Scarlet Leaves</div></i>
+        <dl><dt>A Path Through the Storm</dt></dl>
+        <p>While overlooking Liyue Harbor, the Traveler stops.</p>
+        <h3><span class="mw-headline">Act I</span></h3>
+        <dl><dt>Setting Sail</dt></dl>
+        <p>The Alcor is ready.</p>
+        <dl>
+          <dt>Term</dt>
+          <dd>A real definition stays as text.</dd>
+        </dl>
+      </article>
+    </body></html>
+    """
+    chapters = Wiki(min_chapter_chars=10)._split_chapters(html)
+    text = next(c for c in chapters if c.title == "Summary").content
+    assert "### Prologue - Autumn Winds, Scarlet Leaves" in text
+    assert "#### A Path Through the Storm" in text
+    assert "### Act I" in text
+    assert "#### Setting Sail" in text
+    assert "Main article: Autumn Winds, Scarlet Leaves" in text
+    assert "#### Term" not in text
+    assert "A real definition stays as text." in text
+
+
+def test_page_in_from_infobox_type():
+    html = """
+    <html><body>
+      <h1>Chapter II</h1>
+      <article id="mw-content-text">
+        <aside class="portable-infobox">
+          <h3 class="pi-data-label" data-source="type">Quest Type</h3>
+          <div class="pi-data-value" data-source="type">
+            <a href="/wiki/Archon_Quest">Archon</a>
+          </div>
+        </aside>
+        <h2>Summary</h2>
+        <p>The Traveler sails to Inazuma and meets the Raiden Shogun.</p>
+      </article>
+    </body></html>
+    """
+    chapters = Wiki(min_chapter_chars=10)._split_chapters(html)
+    summary = next(c for c in chapters if c.title == "Summary")
+    assert summary.page_in == "Archon Quest"
+    md = Wiki._render_markdown(summary, summary.content)
+    assert "- In: Archon Quest" in md
+
+
+def test_page_in_from_subpage_title():
+    html = """
+    <html><body>
+      <h1>Inazuma/History</h1>
+      <article id="mw-content-text">
+        <h2>Cataclysm</h2>
+        <p>The cataclysm reached Inazuma five hundred years ago.</p>
+      </article>
+    </body></html>
+    """
+    chapters = Wiki(min_chapter_chars=10)._split_chapters(html)
+    assert chapters[0].page_in == "Inazuma"
+    assert chapters[0].entry == "Inazuma/History"
+    md = Wiki._render_markdown(chapters[0], chapters[0].content)
+    assert "- In: Inazuma" in md
 
 
 def test_split_skips_other_languages_heading():
@@ -212,15 +284,15 @@ def test_run_one_chapter_fail_is_partial(tmp_path):
     src.write_text(_SAMPLE_HTML, encoding="utf-8")
     out = tmp_path / "summaries"
     wiki = Wiki(output_dir=out, min_chapter_chars=10)
-    original = wiki._write_chapter
+    original = Path.write_text
 
-    def write_chapter(chapter, out_dir):
-        if chapter.title == "Archon War":
+    def write_text(self, *args, **kwargs):
+        if self.suffix == ".md" and "Archon_War" in self.name:
             raise RuntimeError("disk")
-        return original(chapter, out_dir)
+        return original(self, *args, **kwargs)
 
-    wiki._write_chapter = write_chapter  # type: ignore[method-assign]
-    results = wiki.run(src)
+    with patch.object(Path, "write_text", write_text):
+        results = wiki.run(src)
     assert len(results) == 1
     row = Page.get(Page.url == str(src.resolve()))
     assert row.status == "partial"
@@ -242,7 +314,7 @@ def test_load_local_mediawiki_json(tmp_path):
         ),
         encoding="utf-8",
     )
-    html, url = Wiki._load_local_page(path)
+    html, url = Wiki.load_local_page(path)
     assert "mw-content-text" in html
     assert "Mondstadt" in html
     assert url.endswith("/wiki/Mondstadt")
@@ -267,3 +339,18 @@ def test_render_markdown_lists_unique_citations():
     assert "Book" in md
     assert "https://example.test/wiki/N" in md
     assert "English body" in md
+
+
+def test_process_local_uses_source_url(tmp_path):
+    src = tmp_path / "page.html"
+    src.write_text(_SAMPLE_HTML, encoding="utf-8")
+    out = tmp_path / "summaries"
+    url = "https://genshin-impact.fandom.com/wiki/Mondstadt"
+    results = Wiki(output_dir=out, min_chapter_chars=10).process_local(
+        src, source_url=url
+    )
+    assert results
+    row = Page.get(Page.url == url)
+    assert row.status == "done"
+    assert row.raw_path == str(src.resolve())
+    assert not Page.select().where(Page.url == str(src.resolve())).exists()

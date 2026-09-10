@@ -65,7 +65,7 @@ def test_ask_appends_english_names_to_retrieval_query():
     result = qa.ask("鸣神大社门口的钟离")
     store.query.assert_called_once_with(
         "鸣神大社门口的钟离; Grand Narukami Shrine, Zhongli",
-        top_k=5,
+        top_k=8,
     )
     assert result.question == "鸣神大社门口的钟离"
     user = llm.chat.call_args.args[0][1]["content"]
@@ -85,7 +85,7 @@ def test_ask_skips_english_already_in_question():
     llm = MagicMock()
     llm.chat.return_value = "答"
     QA(store=store, llm=llm).ask("Who is Zhongli")
-    store.query.assert_called_once_with("Who is Zhongli", top_k=5)
+    store.query.assert_called_once_with("Who is Zhongli", top_k=8)
 
 
 def test_ask_passes_english_source_and_glossary():

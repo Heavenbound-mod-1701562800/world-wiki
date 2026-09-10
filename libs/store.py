@@ -111,7 +111,7 @@ class Store:
     def query(
         self,
         text: str,
-        top_k: int = 5,
+        top_k: int = config.ASK_TOP_K,
         where: Optional[dict[str, Any]] = None,
     ) -> list[Chunk]:
         """语义检索。"""

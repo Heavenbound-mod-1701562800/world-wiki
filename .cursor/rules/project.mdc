@@ -5,7 +5,7 @@ alwaysApply: true
 
 # world-wiki
 
-原神世界观 RAG：Fandom Wiki → 英文章节 md → Chroma 检索 → 问答（资料+词表对照）。不要引入 LangChain。
+原神世界观 RAG：Fandom Wiki → 英文章节 md → Chroma 检索 → 问答（资料+词表对照）。切块用 LangChain splitter；向量库/问答直连 Chroma，不要用 LC 再包一层。
 
 ## 分层
 
@@ -14,7 +14,7 @@ alwaysApply: true
 - `api/app.py`：Flask（`/summarize` `/ingest` `/ask` `/pages` `/dictionary` `/health`）并托管 `frontend/dist`
 - `frontend/`：Vite + React；开发走代理，生产 `npm run build` 后由 Flask 提供
 - `schema/schemas.sql`：SQLite 表现状（库文件仍在 `data/pages.sqlite`）
-- `scripts/main.py`：CLI（`--summarize` / `--ingest` / `--ask`）
+- `scripts/main.py`：CLI（`--summarize` / `--ingest` / `--ask`）；`scripts/rebuild.py`：用 `data/raw` 已下载页清空 pages/summaries/chroma 后重新拆章切块入库（保留词典）
 
 ## 数据（均在 gitignore 的 `data/`）
 

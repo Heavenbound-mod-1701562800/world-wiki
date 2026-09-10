@@ -47,16 +47,18 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 # 出站任务队列：下载与 LLM 分开限速/并发
 CRAWLER_REQUEST_INTERVAL = float(os.getenv("CRAWLER_REQUEST_INTERVAL", "0.5"))
 CRAWLER_MAX_WORKERS = int(os.getenv("CRAWLER_MAX_WORKERS", "20"))
-LLM_REQUEST_INTERVAL = float(os.getenv("LLM_REQUEST_INTERVAL", "0.2"))
-LLM_MAX_WORKERS = int(os.getenv("LLM_MAX_WORKERS", "4"))
+LLM_REQUEST_INTERVAL = float(os.getenv("LLM_REQUEST_INTERVAL", "0.5"))
+LLM_MAX_WORKERS = int(os.getenv("LLM_MAX_WORKERS", "3"))
 LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "300"))
 
 # 业务默认值（CLI / Flask 共用）
 WIKI_HEADING = os.getenv("WIKI_HEADING", "h2")
-ASK_TOP_K = int(os.getenv("ASK_TOP_K", "5"))
+ASK_TOP_K = int(os.getenv("ASK_TOP_K", "8"))
 ASK_SHOW_SOURCES = False
 ASK_STREAM = True
 INGEST_RESET = False
+INGEST_CHUNK_TOKENS = int(os.getenv("INGEST_CHUNK_TOKENS", "512"))
+INGEST_CHUNK_OVERLAP = int(os.getenv("INGEST_CHUNK_OVERLAP", "96"))
 
 # Flask API
 API_HOST = os.getenv("API_HOST", "0.0.0.0")

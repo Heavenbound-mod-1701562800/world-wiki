@@ -66,6 +66,7 @@ class LLM:
         model: Optional[str] = None,
         temperature: float = 0.1,
         max_tokens: Optional[int] = None,
+        thinking: bool = False,
         **kwargs: Any,
     ) -> str:
         """非流式对话，返回 assistant 文本。"""
@@ -74,10 +75,14 @@ class LLM:
             "model": model_name,
             "messages": messages,
             "temperature": temperature,
+            'extra_body': {
+                "thinking": {"type": "enabled"} if thinking else {"type": "disabled"}
+            }
         }
         if max_tokens is not None:
             params["max_tokens"] = max_tokens
         params.update(kwargs)
+        logger.info("LLM chat params=%s", params)
 
         completion = self.client.chat.completions.create(**params)
         content = completion.choices[0].message.content
@@ -89,6 +94,7 @@ class LLM:
         model: Optional[str] = None,
         temperature: float = 0.1,
         max_tokens: Optional[int] = None,
+        thinking: bool = False,
         **kwargs: Any,
     ) -> Generator[str, None, None]:
         """流式对话，逐段 yield 文本 delta。"""
@@ -99,10 +105,14 @@ class LLM:
             "messages": messages,
             "temperature": temperature,
             "stream": True,
+            'extra_body': {
+                "thinking": {"type": "enabled"} if thinking else {"type": "disabled"}
+            }
         }
         if max_tokens is not None:
             params["max_tokens"] = max_tokens
         params.update(kwargs)
+        logger.info("LLM chat_stream params=%s", params)
 
         stream = self.client.chat.completions.create(**params)
         for chunk in stream:

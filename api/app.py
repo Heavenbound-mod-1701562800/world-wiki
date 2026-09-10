@@ -168,7 +168,7 @@ def summarize():
                     "title": item.chapter.title,
                     "source_url": item.chapter.source_url,
                     "slug": item.chapter.slug,
-                    "summary": item.summary,
+                    "summary": item.chapter.content,
                     "output_path": str(item.output_path),
                 }
                 for item in results
