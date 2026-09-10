@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Iterable, Iterator, Optional
 
+import config
 from libs.llm import LLM
 from libs.store import Chunk, Store
 from models.dictionary import Dictionary
@@ -79,7 +80,7 @@ class QA:
 
     store: Store = field(default_factory=Store)
     llm: Optional[LLM] = None
-    top_k: int = 5
+    top_k: int = field(default_factory=lambda: config.ASK_TOP_K)
 
     def __post_init__(self) -> None:
         if self.llm is None:

@@ -33,16 +33,8 @@ def test_summarize_ok(client):
         source_url="https://example.test/wiki/Mondstadt",
     )
     fake = [
-        Result(
-            chapter=chapter,
-            summary="The old world was destroyed.",
-            output_path=Path("a.md"),
-        ),
-        Result(
-            chapter=chapter,
-            summary="Then many gods fought.",
-            output_path=Path("b.md"),
-        ),
+        Result(chapter=chapter, output_path=Path("a.md")),
+        Result(chapter=chapter, output_path=Path("b.md")),
     ]
     with patch("api.app.do_summarize", return_value=fake) as summarize:
         res = client.post(

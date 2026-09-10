@@ -22,12 +22,35 @@ from models.dictionary import Dictionary
 logger = logging.getLogger(__name__)
 
 DEFAULT_WIKI_ORIGIN = "https://genshin-impact.fandom.com"
+_CONTENT_ROOTS = (
+    "#mw-content-text",
+    ".mw-parser-output",
+    "article",
+    "main",
+    "body",
+)
+_JUNK = (
+    "script, style, nav, footer, .toc, .navbox, .mw-editsection, "
+    "ol.references, .references, .custom-tabs, "
+    ".wikia-gallery, .lightbox-caption, div.thumb, figure.thumb, ul.gallery"
+)
 
 
 def _element_text(node: Tag) -> str:
-    """拼出标签文本：沿用原文空白，只有 br 换成换行。"""
+    """拼出标签文本：沿用原文空白，只有 br 换成换行；章内小标题写成 md 头。"""
     if node.name == "br":
         return "\n"
+    if node.name in {"h3", "h4", "h5", "h6"} and not any(
+        str(cls).startswith("pi-") for cls in (node.get("class") or [])
+    ):
+        headline = node.find(class_="mw-headline")
+        title = " ".join((headline or node).get_text(" ", strip=True).split())
+        return f"\n{'#' * int(node.name[1])} {title}\n" if title else ""
+    if node.name == "dl":
+        tags = [child for child in node.children if isinstance(child, Tag)]
+        if len(tags) == 1 and tags[0].name == "dt":
+            title = " ".join(tags[0].get_text(" ", strip=True).split())
+            return f"\n#### {title}\n" if title else ""
     parts: list[str] = []
     for child in node.children:
         if isinstance(child, NavigableString):
@@ -44,7 +67,6 @@ class Citation:
     note_id: str
     label: str
     url: str = ""
-    ref_id: str = ""
 
     def marker(self) -> str:
         """内联〔reference〕文本。"""
@@ -55,8 +77,17 @@ class Citation:
     @classmethod
     def bind(cls, root: Tag, base_url: str = "") -> list[Citation]:
         """把 sup.reference 换成内联〔reference〕标记，并返回文中每一次引用。"""
-        origin = cls._origin(base_url)
-        notes = cls._index_notes(root)
+        parsed = urlparse(base_url)
+        origin = (
+            f"{parsed.scheme}://{parsed.netloc}"
+            if parsed.scheme in {"http", "https"} and parsed.netloc
+            else DEFAULT_WIKI_ORIGIN
+        )
+        notes: dict[str, Tag] = {}
+        for li in root.select("ol.references li, .references li"):
+            note_id = html.unescape(li.get("id") or "").lstrip("#")
+            if note_id:
+                notes[note_id] = li
         collected: list[Citation] = []
         for sup in list(root.select("sup.reference")):
             cite = cls._from_sup(sup, notes, origin)
@@ -67,26 +98,6 @@ class Citation:
             sup.replace_with(NavigableString(cite.marker()))
         return collected
 
-    @staticmethod
-    def _origin(base_url: str) -> str:
-        parsed = urlparse(base_url)
-        if parsed.scheme in {"http", "https"} and parsed.netloc:
-            return f"{parsed.scheme}://{parsed.netloc}"
-        return DEFAULT_WIKI_ORIGIN
-
-    @staticmethod
-    def _norm_id(value: str) -> str:
-        return html.unescape(value or "").lstrip("#")
-
-    @classmethod
-    def _index_notes(cls, root: Tag) -> dict[str, Tag]:
-        notes: dict[str, Tag] = {}
-        for li in root.select("ol.references li, .references li"):
-            note_id = cls._norm_id(li.get("id") or "")
-            if note_id:
-                notes[note_id] = li
-        return notes
-
     @classmethod
     def _from_sup(
         cls,
@@ -94,9 +105,8 @@ class Citation:
         notes: dict[str, Tag],
         origin: str,
     ) -> Citation | None:
-        ref_id = cls._norm_id(sup.get("id") or "")
         anchor = sup.find("a", href=True)
-        note_id = cls._norm_id((anchor.get("href") if anchor else "") or "")
+        note_id = html.unescape((anchor.get("href") if anchor else "") or "").lstrip("#")
         if not note_id:
             return None
 
@@ -115,12 +125,7 @@ class Citation:
             label = note_id
 
         url = urljoin(origin + "/", href) if href else ""
-        return cls(
-            note_id=note_id,
-            label=label,
-            url=url,
-            ref_id=ref_id,
-        )
+        return cls(note_id=note_id, label=label, url=url)
 
 
 @dataclass
@@ -130,26 +135,21 @@ class Chapter:
     title: str
     content: str
     entry: str = ""
-    level: int = 2
-    order: int = 0
     source_url: str = ""
     citations: list[Citation] = field(default_factory=list)
-
-    @staticmethod
-    def _safe_name(text: str, *, max_len: int = 80) -> str:
-        base = re.sub(r"[\\/:*?\"<>|]+", "-", text).strip()
-        base = re.sub(r"\s+", "_", base)
-        base = re.sub(r"_+", "_", base).strip("._-")
-        return (base[:max_len] or "untitled")
+    page_in: str = ""
 
     @property
     def slug(self) -> str:
         """用作 md 文件名的条目__标题。"""
-        entry = self._safe_name(self.entry or "untitled")
-        title = self._safe_name(self.title or "untitled")
-        if entry == title:
-            return entry
-        return f"{entry}__{title}"
+        def safe(text: str) -> str:
+            base = re.sub(r"[\\/:*?\"<>|]+", "-", text).strip()
+            base = re.sub(r"\s+", "_", base)
+            return re.sub(r"_+", "_", base).strip("._-")[:80] or "untitled"
+
+        entry = safe(self.entry or "untitled")
+        title = safe(self.title or "untitled")
+        return entry if entry == title else f"{entry}__{title}"
 
 
 @dataclass
@@ -157,7 +157,6 @@ class Result:
     """一章英文正文的落盘结果。"""
 
     chapter: Chapter
-    summary: str
     output_path: Path
 
 
@@ -168,13 +167,6 @@ class Wiki:
     crawler: FandomWikiCrawler = field(default_factory=FandomWikiCrawler)
     output_dir: Path = field(default_factory=lambda: config.SUMMARIES_DIR)
     heading_tags: tuple[str, ...] = ("h2",)
-    content_selectors: tuple[str, ...] = (
-        "#mw-content-text",
-        ".mw-parser-output",
-        "article",
-        "main",
-        "body",
-    )
     min_chapter_chars: int = 40
 
     def __post_init__(self) -> None:
@@ -208,19 +200,19 @@ class Wiki:
         results: list[Result] = []
         for url in urls:
             results.extend(
-                self._process_remote(url, max_chapters=max_chapters, output_dir=output_dir)
+                self._fetch(url, max_chapters=max_chapters, output_dir=output_dir)
             )
-
         for path in local_paths:
             if not path.exists():
                 raise FileNotFoundError(f"找不到本地 HTML：{path}")
             results.extend(
-                self._process_local(path, max_chapters=max_chapters, output_dir=output_dir)
+                self.process_local(
+                    path, output_dir=output_dir, max_chapters=max_chapters
+                )
             )
-
         return results
 
-    def _process_remote(
+    def _fetch(
         self,
         url: str,
         *,
@@ -233,33 +225,38 @@ class Wiki:
         if not html_text:
             Page.upsert(url, status="failed", error="下载失败")
             return []
-        raw_path = self._save_one_raw(url, html_text)
-        return self._split_and_summarize(
+        return self._write_page(
             html_text,
             source_url=url,
-            raw_path=raw_path,
+            raw_path=self._save_raw(url, html_text),
             max_chapters=max_chapters,
             output_dir=output_dir,
         )
 
-    def _process_local(
+    def process_local(
         self,
-        path: Path,
+        path: str | Path,
         *,
-        max_chapters: Optional[int],
-        output_dir: Optional[Path],
+        source_url: str = "",
+        output_dir: Optional[Path] = None,
+        max_chapters: Optional[int] = None,
     ) -> list[Result]:
-        html_text, page_url = self._load_local_page(path)
-        Page.upsert(page_url, status="fetching", error="", raw_path=str(path.resolve()))
-        return self._split_and_summarize(
+        """用已下载 HTML/JSON 拆章写 md，不访问网络。"""
+        path = Path(path)
+        html_text, page_url = self.load_local_page(path)
+        if source_url:
+            page_url = source_url
+        resolved = path.resolve()
+        Page.upsert(page_url, status="fetching", error="", raw_path=str(resolved))
+        return self._write_page(
             html_text,
             source_url=page_url,
-            raw_path=path.resolve(),
+            raw_path=resolved,
             max_chapters=max_chapters,
             output_dir=output_dir,
         )
 
-    def _split_and_summarize(
+    def _write_page(
         self,
         html_text: str,
         *,
@@ -273,48 +270,64 @@ class Wiki:
             chapters = chapters[:max_chapters]
         title = chapters[0].entry if chapters else ""
         raw = str(raw_path)
+
+        def mark(**kwargs) -> None:
+            Page.upsert(source_url, title=title, raw_path=raw, **kwargs)
+
         if not chapters:
-            Page.upsert(
-                source_url,
-                title=title,
+            mark(
                 status="failed",
                 error="未拆出有效章节",
                 chapter_total=0,
                 chapter_ok=0,
-                raw_path=raw,
             )
             return []
 
-        Page.upsert(
-            source_url,
-            title=title,
+        mark(
             status="summarizing",
             error="",
             chapter_total=len(chapters),
             chapter_ok=0,
-            raw_path=raw,
         )
-        results, failed = self._summarize_and_save(chapters, output_dir=output_dir)
-        ok = len(results)
-        if ok == 0:
+        out_dir = Path(output_dir or self.output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        results: list[Result] = []
+        for chapter in chapters:
+            try:
+                path = out_dir / f"{chapter.slug}.md"
+                path.write_text(
+                    self._render_markdown(chapter, chapter.content or ""),
+                    encoding="utf-8",
+                )
+                results.append(Result(chapter=chapter, output_path=path))
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.error(
+                    "写入失败，已跳过：%s / %s (%s)",
+                    chapter.entry or "?",
+                    chapter.title,
+                    exc,
+                )
+                continue
+            mark(status="summarizing", chapter_ok=len(results))
+        failed = len(chapters) - len(results)
+        if failed:
+            logger.warning("本页写入：成功 %d 章，跳过 %d 章", len(results), failed)
+        if not results:
             status, err = "failed", f"全部 {len(chapters)} 章写入失败"
         elif failed:
             status, err = "partial", f"跳过 {failed} 章"
         else:
             status, err = "done", ""
-        Page.upsert(
-            source_url,
-            title=title,
+        mark(
             status=status,
             error=err,
             chapter_total=len(chapters),
-            chapter_ok=ok,
-            raw_path=raw,
+            chapter_ok=len(results),
         )
         return results
 
     @staticmethod
-    def _load_local_page(path: Path) -> tuple[str, str]:
+    def load_local_page(path: Path) -> tuple[str, str]:
         """读取本地 HTML，或 MediaWiki API JSON（parse.text）。"""
         raw = path.read_text(encoding="utf-8")
         fallback_url = str(path.resolve())
@@ -340,207 +353,141 @@ class Wiki:
         page_url = f"{DEFAULT_WIKI_ORIGIN}/wiki/{title.replace(' ', '_')}"
         return FandomWikiCrawler.wrap_article_html(title, body), page_url
 
-    def _save_one_raw(self, url: str, page_html: str) -> Path:
-        path = self._default_raw_path(url)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(page_html, encoding="utf-8")
-        logger.info("已保存 HTML：%s", path)
-        return path
-
     @staticmethod
-    def _default_raw_path(url: str) -> Path:
+    def _save_raw(url: str, page_html: str) -> Path:
         parsed = urlparse(url)
         host = parsed.netloc.replace(":", "_") or "page"
-        path = parsed.path.strip("/") or "index"
-        slug = re.sub(r"[^\w\u4e00-\u9fff.-]+", "_", path, flags=re.UNICODE)
+        slug_src = parsed.path.strip("/") or "index"
+        slug = re.sub(r"[^\w\u4e00-\u9fff.-]+", "_", slug_src, flags=re.UNICODE)
         slug = re.sub(r"_+", "_", slug).strip("_")[:80] or "index"
-        raw_dir = config.RAW_DIR
-        raw_dir.mkdir(parents=True, exist_ok=True)
-        return raw_dir / f"{host}_{slug}.html"
-
-    def _summarize_and_save(
-        self,
-        chapters: list[Chapter],
-        *,
-        output_dir: Optional[Path] = None,
-    ) -> tuple[list[Result], int]:
-        if not chapters:
-            return [], 0
-
-        out_dir = Path(output_dir or self.output_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        results: list[Result] = []
-        failed = 0
-        for chapter in chapters:
-            try:
-                result = self._write_chapter(chapter, out_dir)
-            except Exception as exc:  # pylint: disable=broad-exception-caught
-                failed += 1
-                logger.error(
-                    "写入失败，已跳过：%s / %s (%s)",
-                    chapter.entry or "?",
-                    chapter.title,
-                    exc,
-                )
-                continue
-            results.append(result)
-            Page.upsert(
-                chapter.source_url,
-                status="summarizing",
-                chapter_ok=len(results),
-            )
-
-        if failed:
-            logger.warning("本页写入：成功 %d 章，跳过 %d 章", len(results), failed)
-        return results, failed
-
-    def _write_chapter(self, chapter: Chapter, out_dir: Path) -> Result:
-        body = chapter.content or ""
-        path = out_dir / f"{chapter.slug}.md"
-        path.write_text(self._render_markdown(chapter, body), encoding="utf-8")
-        return Result(chapter=chapter, summary=body, output_path=path)
+        config.RAW_DIR.mkdir(parents=True, exist_ok=True)
+        dest = config.RAW_DIR / f"{host}_{slug}.html"
+        dest.write_text(page_html, encoding="utf-8")
+        logger.info("已保存 HTML：%s", dest)
+        return dest
 
     def _split_chapters(
         self,
         page_html: str,
         *,
         source_url: str = "",
-        page_title: Optional[str] = None,
     ) -> list[Chapter]:
         soup = BeautifulSoup(page_html, "lxml")
-        root = self._pick_content_root(soup)
+        root: Tag = soup.body or soup
+        for selector in _CONTENT_ROOTS:
+            node = soup.select_one(selector)
+            if node:
+                root = node
+                break
         catalog = Citation.bind(root, source_url)
-
-        for junk in root.select(
-            "script, style, nav, footer, .toc, .navbox, .mw-editsection, "
-            "ol.references, .references, .custom-tabs, "
-            ".wikia-gallery, .lightbox-caption, div.thumb, figure.thumb, ul.gallery"
-        ):
+        for junk in root.select(_JUNK):
             junk.decompose()
 
-        entry = page_title or self._extract_page_title(soup) or "untitled"
-        chapters = self._split_by_heading_traversal(
-            root, entry, source_url, catalog
-        )
+        h1 = soup.find("h1")
+        entry = h1.get_text(" ", strip=True) if h1 else ""
+        if not entry and soup.title and soup.title.string:
+            entry = soup.title.string.strip()
+        entry = entry or "untitled"
+        page_in = _page_in(entry, root)
+
+        headings = root.find_all(self.heading_tags)
+        chapters: list[Chapter] = []
+        heading_set = set(headings)
+        if headings:
+            preface = self._section_text(headings[0], after=False)
+            if len(preface) >= self.min_chapter_chars:
+                chapters.append(
+                    self.create_chapter(
+                        "Introduction",
+                        preface,
+                        entry=entry,
+                        source_url=source_url,
+                        catalog=catalog,
+                        page_in=page_in,
+                    )
+                )
+            for heading in headings:
+                title = heading.get_text(" ", strip=True) or f"untitled{len(chapters)}"
+                if title.strip().casefold() == "other languages":
+                    Dictionary.add(
+                        _pairs_from_other_languages(heading, self.heading_tags),
+                        source=Dictionary.Source.WIKI,
+                        strict=False,
+                    )
+                    continue
+                content = self._section_text(
+                    heading, after=True, heading_set=heading_set
+                )
+                if len(content) < self.min_chapter_chars:
+                    continue
+                chapters.append(
+                    self.create_chapter(
+                        title,
+                        content,
+                        entry=entry,
+                        source_url=source_url,
+                        catalog=catalog,
+                        page_in=page_in,
+                    )
+                )
 
         if not chapters:
             full = self._normalize_text(_element_text(root))
             if full:
                 chapters = [
-                    Chapter(
-                        title=entry,
-                        content=full,
+                    self.create_chapter(
+                        entry,
+                        full,
                         entry=entry,
-                        level=1,
-                        order=0,
                         source_url=source_url,
-                        citations=self._citations_in_text(full, catalog),
+                        catalog=catalog,
+                        page_in=page_in,
                     )
                 ]
         return chapters
 
-    def _pick_content_root(self, soup: BeautifulSoup) -> Tag:
-        for selector in self.content_selectors:
-            node = soup.select_one(selector)
-            if node:
-                return node
-        return soup.body or soup
-
-    def _extract_page_title(self, soup: BeautifulSoup) -> str:
-        h1 = soup.find("h1")
-        if h1:
-            text = h1.get_text(" ", strip=True)
-            if text:
-                return text
-        if soup.title and soup.title.string:
-            return soup.title.string.strip()
-        return ""
-
-    def _split_by_heading_traversal(
+    def create_chapter(
         self,
-        root: Tag,
-        page_title: str,
+        title: str,
+        content: str,
+        *,
+        entry: str,
         source_url: str,
         catalog: list[Citation],
-    ) -> list[Chapter]:
-        headings = root.find_all(self.heading_tags)
-        if not headings:
-            return []
+        page_in: str,
+    ) -> Chapter:
+        return Chapter(
+            title=title,
+            content=content,
+            entry=entry,
+            source_url=source_url,
+            citations=self._citations_in_text(content, catalog),
+            page_in=page_in,
+        )
 
-        chapters: list[Chapter] = []
-        order = 0
-        heading_set = set(headings)
-        preface = self._collect_preface(headings[0])
-        if len(preface) >= self.min_chapter_chars:
-            chapters.append(
-                Chapter(
-                    title="Introduction",
-                    content=preface,
-                    entry=page_title,
-                    level=1,
-                    order=order,
-                    source_url=source_url,
-                    citations=self._citations_in_text(preface, catalog),
-                )
-            )
-            order += 1
-
-        for heading in headings:
-            title = heading.get_text(" ", strip=True) or f"untitled{order}"
-            if title.strip().casefold() == "other languages":
-                Dictionary.add(
-                    _pairs_from_other_languages(heading, self.heading_tags),
-                    source=Dictionary.Source.WIKI,
-                    strict=False,
-                )
-                continue
-            level = (
-                int(heading.name[1])
-                if heading.name and heading.name.startswith("h")
-                else 2
-            )
-            content = self._collect_heading_content(heading, heading_set)
-            if len(content) < self.min_chapter_chars:
-                continue
-            chapters.append(
-                Chapter(
-                    title=title,
-                    content=content,
-                    entry=page_title,
-                    level=level,
-                    order=order,
-                    source_url=source_url,
-                    citations=self._citations_in_text(content, catalog),
-                )
-            )
-            order += 1
-
-        return chapters
-
-    def _collect_preface(self, first: Tag) -> str:
+    def _section_text(
+        self,
+        node: Tag,
+        *,
+        after: bool,
+        heading_set: set | None = None,
+    ) -> str:
         parts: list[str] = []
-        for sib in first.previous_siblings:
-            if isinstance(sib, Tag):
-                text = _element_text(sib)
-                if text:
-                    parts.append(text)
-        return self._normalize_text("\n".join(reversed(parts)))
-
-    def _collect_heading_content(self, heading: Tag, heading_set: set) -> str:
-        parts: list[str] = []
-        for sib in heading.next_siblings:
-            if isinstance(sib, Tag) and (
-                sib in heading_set or sib.name in self.heading_tags
-            ):
-                break
-            if isinstance(sib, Tag):
+        siblings = node.next_siblings if after else node.previous_siblings
+        for sib in siblings:
+            if not isinstance(sib, Tag):
+                continue
+            if after and heading_set is not None:
+                if sib in heading_set or sib.name in self.heading_tags:
+                    break
                 nested = sib.find(self.heading_tags)
                 if nested and nested in heading_set:
                     break
-                text = _element_text(sib)
-                if text:
-                    parts.append(text)
+            text = _element_text(sib)
+            if text:
+                parts.append(text)
+        if not after:
+            parts.reverse()
         return self._normalize_text("\n".join(parts))
 
     @staticmethod
@@ -577,12 +524,10 @@ class Wiki:
             f"- Entry: {entry}",
             f"- Title: {title}",
             f"- Source: {chapter.source_url or 'unknown'}",
-            "",
-            "## Content",
-            "",
-            summary.strip(),
-            "",
         ]
+        if chapter.page_in:
+            lines.append(f"- In: {chapter.page_in}")
+        lines.extend(["", "## Content", "", summary.strip(), ""])
         if chapter.citations:
             lines.extend(["## Citations", ""])
             seen: set[str] = set()
@@ -596,6 +541,28 @@ class Wiki:
                     lines.append(f"- {cite.label}")
             lines.append("")
         return "\n".join(lines)
+
+
+def _page_in(entry: str, root: Tag) -> str:
+    """Fandom 页眉那种 in:：子页父标题，否则 infobox type。"""
+    if "/" in (entry or ""):
+        parent = entry.rsplit("/", 1)[0].strip()
+        if parent:
+            return parent
+    kind = ""
+    for node in root.select('[data-source="type"]'):
+        classes = " ".join(node.get("class") or [])
+        if "label" in classes:
+            continue
+        text = " ".join(node.get_text(" ", strip=True).split())
+        if text and text.casefold() not in {"quest type", "type"}:
+            kind = text
+            break
+    if not kind:
+        return ""
+    if "quest" in kind.casefold():
+        return kind
+    return f"{kind} Quest"
 
 
 def _pairs_from_other_languages(
