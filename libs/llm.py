@@ -82,7 +82,7 @@ class LLM:
         if max_tokens is not None:
             params["max_tokens"] = max_tokens
         params.update(kwargs)
-        logger.info("LLM chat params=%s", params)
+        # logger.info("LLM chat params=%s", params)
 
         completion = self.client.chat.completions.create(**params)
         content = completion.choices[0].message.content
@@ -99,7 +99,7 @@ class LLM:
     ) -> Generator[str, None, None]:
         """流式对话，逐段 yield 文本 delta。"""
         model_name = model or self.chat_model
-        logger.info("LLM chat_stream model=%s messages=%d", model_name, len(messages))
+        # logger.info("LLM chat_stream model=%s messages=%d", model_name, len(messages))
         params: dict[str, Any] = {
             "model": model_name,
             "messages": messages,
@@ -112,7 +112,7 @@ class LLM:
         if max_tokens is not None:
             params["max_tokens"] = max_tokens
         params.update(kwargs)
-        logger.info("LLM chat_stream params=%s", params)
+        # logger.info("LLM chat_stream params=%s", params)
 
         stream = self.client.chat.completions.create(**params)
         for chunk in stream:
@@ -157,6 +157,14 @@ class LLM:
         sorted_data = sorted(response.data, key=lambda item: item.index)
         return [item.embedding for item in sorted_data]
 
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=8),
+        retry=retry_if_exception_type(
+            (httpx.TimeoutException, httpx.HTTPStatusError)
+        ),
+    )
     def embed_multi(
         self,
         parts: Sequence[dict[str, Any]],
@@ -191,6 +199,8 @@ class LLM:
                 },
                 json=payload,
             )
+        if response.status_code == 429 or response.status_code >= 500:
+            response.raise_for_status()
         if response.status_code >= 400:
             raise RuntimeError(
                 f"embed_multi 失败 ({response.status_code}): {response.text}"

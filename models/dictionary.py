@@ -344,6 +344,43 @@ class Dictionary(BaseModel):
         return sorted(hits.values(), key=lambda item: len(item[0]), reverse=True)
 
     @classmethod
+    def format_glossary(cls, pairs: list[tuple[str, str]]) -> str:
+        """专名对照块；没有命中则「（无）」。"""
+        if not pairs:
+            return "（无）"
+        return "\n".join(f"{en} → {zh}" for en, zh in pairs)
+
+    @classmethod
+    def to_en(cls, text: str, pairs: list[tuple[str, str]] | None = None) -> str:
+        """中文专名换成对照表英文；整词或串内替换。"""
+        hits = pairs if pairs is not None else cls.matches_in(text)
+        fold = (text or "").casefold()
+        for en, zh in hits:
+            if en.casefold() == fold or zh == text:
+                return en
+        out = text or ""
+        for en, zh in sorted(hits, key=lambda item: len(item[1]), reverse=True):
+            if zh and zh in out:
+                out = out.replace(zh, en)
+        return out
+
+    @classmethod
+    def attach_english(cls, question: str) -> str:
+        """问句后附上尚未出现的英文专名，供检索用。"""
+        extra: list[str] = []
+        seen: set[str] = set()
+        fold = question.casefold()
+        for en, _zh in cls.matches_in(question):
+            key = en.casefold()
+            if key in seen or key in fold:
+                continue
+            seen.add(key)
+            extra.append(en)
+        if not extra:
+            return question
+        return question + "; " + ", ".join(extra)
+
+    @classmethod
     def _match_indexes(
         cls,
     ) -> tuple[

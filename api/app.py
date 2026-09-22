@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import httpx
 from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
 from flask_cors import CORS
 
@@ -184,7 +185,7 @@ def ingest():
     reset = body.get("reset")
     try:
         report = do_ingest(reset=reset)
-    except (ValueError, FileNotFoundError, RuntimeError) as exc:
+    except (ValueError, FileNotFoundError, RuntimeError, httpx.HTTPStatusError) as exc:
         return _error(exc)
 
     return jsonify(
