@@ -47,7 +47,7 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 # 出站任务队列：下载与 LLM 分开限速/并发
 CRAWLER_REQUEST_INTERVAL = float(os.getenv("CRAWLER_REQUEST_INTERVAL", "0.5"))
 CRAWLER_MAX_WORKERS = int(os.getenv("CRAWLER_MAX_WORKERS", "20"))
-LLM_REQUEST_INTERVAL = float(os.getenv("LLM_REQUEST_INTERVAL", "0.5"))
+LLM_REQUEST_INTERVAL = float(os.getenv("LLM_REQUEST_INTERVAL", "0.7"))
 LLM_MAX_WORKERS = int(os.getenv("LLM_MAX_WORKERS", "3"))
 LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "300"))
 

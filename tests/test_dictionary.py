@@ -114,6 +114,22 @@ def test_matches_in_skips_url_empty_zh_and_not_proper():
     assert Dictionary.to_zh("Vision") is None
 
 
+def test_glossary_helpers_format_to_en_attach():
+    Dictionary.create(
+        en="Zhongli", zh="钟离", source=Dictionary.Source.GENSHIN_DICTIONARY
+    )
+    Dictionary.create(
+        en="Mondstadt", zh="蒙德", source=Dictionary.Source.GENSHIN_DICTIONARY
+    )
+    pairs = Dictionary.matches_in("蒙德的钟离")
+    assert "Zhongli → 钟离" in Dictionary.format_glossary(pairs)
+    assert Dictionary.format_glossary([]) == "（无）"
+    assert Dictionary.to_en("钟离", pairs) == "Zhongli"
+    assert Dictionary.to_en("蒙德 Archon War", pairs) == "Mondstadt Archon War"
+    assert Dictionary.attach_english("钟离是谁") == "钟离是谁; Zhongli"
+    assert Dictionary.attach_english("Who is Zhongli") == "Who is Zhongli"
+
+
 def test_matches_in_equates_dashes_and_spaces():
     Dictionary.create(
         en="Entombed City - Ancient Palace",

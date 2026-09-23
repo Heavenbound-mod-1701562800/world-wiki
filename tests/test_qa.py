@@ -1,15 +1,24 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from libs.store import Chunk
 from models.dictionary import Dictionary
+from models.plan import Gathered
 from models.qa import AnswerStream, QA
 
 
-def test_prepare_rejects_empty_question_and_empty_store():
+def _patch_planner(chunks: list[Chunk]) -> MagicMock:
+    planner = MagicMock()
+    planner.plan.return_value = [object()]
+    planner.gather.return_value = Gathered(chunks=chunks, cells=[])
+    return planner
+
+
+@patch("models.qa.Planner")
+def test_prepare_rejects_empty_question_and_empty_store(planner_cls):
     store = MagicMock()
     store.count.return_value = 0
     qa = QA(store=store, llm=MagicMock())
@@ -17,6 +26,7 @@ def test_prepare_rejects_empty_question_and_empty_store():
         qa.ask("  ")
     with pytest.raises(RuntimeError, match="向量库为空"):
         qa.ask("风神是谁")
+    planner_cls.assert_not_called()
 
 
 def test_format_context_uses_label():
@@ -31,64 +41,28 @@ def test_format_context_uses_label():
     assert QA._format_context([]) == "（无相关资料）"
 
 
-def test_ask_uses_store_and_llm():
+@patch("models.qa.Planner")
+def test_ask_uses_gathered_chunks(planner_cls):
     chunk = Chunk(id="1", document="钟离是岩神。", metadata={"label": "钟离"})
     store = MagicMock()
     store.count.return_value = 1
-    store.query.return_value = [chunk]
     llm = MagicMock()
     llm.chat.return_value = "  岩神。  "
-    qa = QA(store=store, llm=llm, top_k=3)
-    result = qa.ask("岩神是谁", top_k=2)
+    planner = _patch_planner([chunk])
+    planner_cls.return_value = planner
+    result = QA(store=store, llm=llm, top_k=3).ask("岩神是谁", top_k=2)
     assert result.answer == "岩神。"
-    store.query.assert_called_once_with("岩神是谁", top_k=2)
     assert result.sources == [chunk]
-
-
-def test_ask_appends_english_names_to_retrieval_query():
-    Dictionary.create(
-        en="Zhongli", zh="钟离", source=Dictionary.Source.GENSHIN_DICTIONARY
-    )
-    Dictionary.create(
-        en="Grand Narukami Shrine",
-        zh="鸣神大社",
-        source=Dictionary.Source.GENSHIN_DICTIONARY,
-    )
-    store = MagicMock()
-    store.count.return_value = 1
-    store.query.return_value = [
-        Chunk(id="1", document="Zhongli.", metadata={"label": "Zhongli"})
-    ]
-    llm = MagicMock()
-    llm.chat.return_value = "答"
-    qa = QA(store=store, llm=llm)
-    result = qa.ask("鸣神大社门口的钟离")
-    store.query.assert_called_once_with(
-        "鸣神大社门口的钟离; Grand Narukami Shrine, Zhongli",
-        top_k=8,
-    )
-    assert result.question == "鸣神大社门口的钟离"
+    planner_cls.assert_called_once_with(llm=llm, store=store)
+    planner.plan.assert_called_once_with("岩神是谁")
+    planner.gather.assert_called_once_with(planner.plan.return_value, max_chunks=2)
+    store.query.assert_not_called()
     user = llm.chat.call_args.args[0][1]["content"]
-    assert user.startswith("问题：鸣神大社门口的钟离\n")
-    assert "问题：鸣神大社门口的钟离, Grand" not in user
+    assert user.startswith("问题：岩神是谁\n")
 
 
-def test_ask_skips_english_already_in_question():
-    Dictionary.create(
-        en="Zhongli", zh="钟离", source=Dictionary.Source.GENSHIN_DICTIONARY
-    )
-    store = MagicMock()
-    store.count.return_value = 1
-    store.query.return_value = [
-        Chunk(id="1", document="Zhongli.", metadata={"label": "Zhongli"})
-    ]
-    llm = MagicMock()
-    llm.chat.return_value = "答"
-    QA(store=store, llm=llm).ask("Who is Zhongli")
-    store.query.assert_called_once_with("Who is Zhongli", top_k=8)
-
-
-def test_ask_passes_english_source_and_glossary():
+@patch("models.qa.Planner")
+def test_ask_passes_english_source_and_glossary(planner_cls):
     Dictionary.create(
         en="Zhongli", zh="钟离", source=Dictionary.Source.GENSHIN_DICTIONARY
     )
@@ -99,27 +73,27 @@ def test_ask_passes_english_source_and_glossary():
     )
     store = MagicMock()
     store.count.return_value = 1
-    store.query.return_value = [chunk]
     llm = MagicMock()
     llm.chat.return_value = "钟离是岩神。"
-    qa = QA(store=store, llm=llm)
-    qa.ask("岩神是谁")
-    messages = llm.chat.call_args.args[0]
-    user = messages[1]["content"]
+    planner_cls.return_value = _patch_planner([chunk])
+    QA(store=store, llm=llm).ask("岩神是谁")
+    user = llm.chat.call_args.args[0][1]["content"]
+    assert user.startswith("问题：岩神是谁\n")
     assert "Zhongli is the Geo Archon of Liyue." in user
     assert "Zhongli → 钟离" in user
     assert "专名对照：" in user
+    store.query.assert_not_called()
 
 
-def test_ask_stream_builds_answer_after_tokens():
+@patch("models.qa.Planner")
+def test_ask_stream_builds_answer_after_tokens(planner_cls):
     chunk = Chunk(id="1", document="钟离是岩神。", metadata={"label": "钟离"})
     store = MagicMock()
     store.count.return_value = 1
-    store.query.return_value = [chunk]
     llm = MagicMock()
     llm.chat_stream.return_value = iter(["岩", "神"])
-    qa = QA(store=store, llm=llm)
-    stream = qa.ask_stream("岩神是谁")
+    planner_cls.return_value = _patch_planner([chunk])
+    stream = QA(store=store, llm=llm).ask_stream("岩神是谁")
     assert "".join(stream) == "岩神"
     assert stream.result.answer == "岩神"
     assert stream.result.sources == [chunk]
@@ -129,4 +103,3 @@ def test_answer_stream_result_before_iter_raises():
     stream = AnswerStream(question="谁", sources=[], _tokens=["x"])
     with pytest.raises(RuntimeError, match="尚未结束"):
         _ = stream.result
-

@@ -1,6 +1,6 @@
 ---
 description: Chroma 入库与 RAG 问答
-globs: models/ingest.py,models/qa.py,models/dictionary.py,libs/store.py,libs/tokenizer.py
+globs: models/ingest.py,models/qa.py,models/plan.py,models/dictionary.py,libs/store.py,libs/tokenizer.py
 alwaysApply: false
 ---
 
@@ -10,4 +10,4 @@ alwaysApply: false
 
 `Ingest` 扫描 `data/summaries/*.md` 的 `## Content`（到 `## Citations` 前）：`MarkdownHeaderTextSplitter` 按 `###`–`######` 切，超长再 `RecursiveCharacterTextSplitter`（512 token 窗口、重叠 96，内部 `×4` 当字符；页眉不参与重叠）。每块开头自己加 `#` 页面标题（Entry）和 `in:`（md 的 `- In:`，否则该章 Title）。`content_hash` 未变则跳过整文件；变了按 `filename` 删旧块再写。`--ingest --reset` 才清空重建。默认 `ASK_TOP_K=8`。
 
-QA 检索前用 `matches_in` 扫问题里的专名，把命中的英文用逗号附在查询后面（原问进 prompt，附录不进）。资料侧再 `matches_in` 英文 md 做「专名对照」。`matches_in` 一次读出词表在内存匹配（约万级）：同一行的 `en`/`zh` 都能打中；英文空白/下划线/连字符收成单空格；中文先去掉隔离符（含间隔号）再 jieba 切词，只对照整 token（`zh_terms` + `get_tokenizer`；避免「影子」误中「影」）。要用 tokenizer 一律 `from models.dictionary import get_tokenizer`，不要直接用 `libs.tokenizer`；句号、逗号、冒号、分号、引号为硬边界；不做 Inazuman 这类词形。回答用中文，专名用对照表译名。带〔reference〕或 NPC 对话的内容必须限定语气，不得说成确定设定。来源标点按标签：`Book:` 用《》，武器/道具用「」，角色故事/地点/任务等不加书名号。不要在回答里写「根据某某文档」。
+QA 走 `Planner.plan` 切问填槽，再 `Planner.gather` 按每路英文查询取 chunk（每路 `cell_k=4`，送进模型的块数上限默认 `ASK_TOP_K`），用用户原问一次性作答。`Dictionary`：`matches_in` 扫专名；对照块用 `format_glossary`；中文专名收成英文用 `to_en`。规划侧每条子问 `matches_in`；资料侧再对英文 md 做「专名对照」。`matches_in` 一次读出词表在内存匹配（约万级）：同一行的 `en`/`zh` 都能打中；英文空白/下划线/连字符收成单空格；中文先去掉隔离符（含间隔号）再 jieba 切词，只对照整 token（`zh_terms` + `get_tokenizer`；避免「影子」误中「影」）。要用 tokenizer 一律 `from models.dictionary import get_tokenizer`，不要直接用 `libs.tokenizer`；句号、逗号、冒号、分号、引号为硬边界；不做 Inazuman 这类词形。回答用中文，专名用对照表译名。带〔reference〕或 NPC 对话的内容必须限定语气，不得说成确定设定。来源标点按标签：`Book:` 用《》，武器/道具用「」，角色故事/地点/任务等不加书名号。不要在回答里写「根据某某文档」。
